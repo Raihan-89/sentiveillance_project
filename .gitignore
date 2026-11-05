@@ -34,3 +34,5 @@ build/
 
 ### ignore my files folder
 my_files
+### SDK extracted tree + runtime output
+var/

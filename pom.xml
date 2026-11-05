@@ -28,19 +28,79 @@
     </scm>
     <properties>
         <java.version>21</java.version>
+        <neurotec.version>2025.1.0.0</neurotec.version>
+        <neurotec.surveillance.version>10.1.0.0</neurotec.surveillance.version>
+        <jna.version>5.11.0</jna.version>
+        <sdk.root>${project.basedir}/my_files/sdk/SentiVeillance_10_1_SDK</sdk.root>
     </properties>
     <dependencies>
+
+        <!-- ===== Web + persistence ===== -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- ===== Neurotechnology SentiVeillance 10.1 SDK =====
+             These are NOT on Maven Central. Install them into the local
+             repository first (one-time):
+                 cd my_files/sdk/SentiVeillance_10_1_SDK && mvn validate
+             Coordinates/versions copied verbatim from that SDK's own pom.xml. -->
+        <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna</artifactId>
+            <version>${jna.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.neurotec</groupId>
+            <artifactId>neurotec-core</artifactId>
+            <version>${neurotec.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.neurotec</groupId>
+            <artifactId>neurotec-licensing</artifactId>
+            <version>${neurotec.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.neurotec</groupId>
+            <artifactId>neurotec-media</artifactId>
+            <version>${neurotec.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.neurotec</groupId>
+            <artifactId>neurotec-media-processing</artifactId>
+            <version>${neurotec.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.neurotec</groupId>
+            <artifactId>neurotec-biometrics</artifactId>
+            <version>${neurotec.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.neurotec</groupId>
+            <artifactId>neurotec-devices</artifactId>
+            <version>${neurotec.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.neurotec</groupId>
+            <artifactId>neurotec-surveillance</artifactId>
+            <version>${neurotec.surveillance.version}</version>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter</artifactId>
         </dependency>
 
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-devtools</artifactId>
-            <scope>runtime</scope>
-            <optional>true</optional>
-        </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
@@ -58,6 +118,14 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- The Neurotec classes load their .so/.dll through JNA, so the
+                         native directory has to be on jna.library.path before the first
+                         com.neurotec.* class is initialised. SdkBootstrap also sets this
+                         at runtime; passing it here makes `mvn spring-boot:run` work even
+                         if the SDK sits outside the project. -->
+                    <jvmArguments>-Dsentiveillance.sdk.root=${sdk.root}</jvmArguments>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
