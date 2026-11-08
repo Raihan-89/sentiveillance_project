@@ -22,6 +22,9 @@ import java.nio.file.Paths;
  * found by the native code itself, which looks for {@code ../../Bin/Data} relative to the
  * shared library. So the SDK directory tree must be kept intact - do not copy the .so files
  * out on their own.
+ *
+ * @author Md. Raihan Shikder (Raihan-89)
+ * @date 8 November, 2026
  */
 public final class SdkBootstrap {
 

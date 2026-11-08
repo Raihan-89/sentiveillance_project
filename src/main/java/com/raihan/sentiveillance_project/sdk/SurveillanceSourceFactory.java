@@ -29,6 +29,9 @@ import java.util.EnumSet;
  *
  * <p>Pattern copied from {@code Tutorials/Surveillance/CS/CountSubjectsCS/Program.cs}
  * ({@code ConnectDevice}) and the Java web sample's {@code addSource}.
+ *
+ * @author Md. Raihan Shikder (Raihan-89)
+ * @date 8 November, 2026
  */
 @Slf4j
 @Component

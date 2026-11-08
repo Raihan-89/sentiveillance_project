@@ -17,6 +17,9 @@ import java.util.List;
  *   <li>build face templates from the employee photos</li>
  *   <li>create the engine, load the watch list, attach the source, start capturing</li>
  * </ol>
+ *
+ * @author Md. Raihan Shikder (Raihan-89)
+ * @date 8 November, 2026
  */
 @Slf4j
 @Component

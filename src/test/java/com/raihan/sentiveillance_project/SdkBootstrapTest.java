@@ -7,7 +7,12 @@ import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Pure path logic - no SDK classes are touched, so this runs anywhere. */
+/**
+ * Pure path logic - no SDK classes are touched, so this runs anywhere.
+ *
+ * @author Md. Raihan Shikder (Raihan-89)
+ * @date 8 November, 2026
+ */
 class SdkBootstrapTest {
 
     @Test

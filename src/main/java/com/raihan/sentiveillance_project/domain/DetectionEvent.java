@@ -14,6 +14,9 @@ import java.time.Instant;
  * SUBJECT_TRACK events and one SUBJECT_DISAPPEARED, all carrying the same
  * {@code traceIndex}. That trace index is the unit an attendance system should aggregate
  * over - one trace is one visit, not one row.
+ *
+ *  @author Md. Raihan Shikder (Raihan-89)
+ *  @date 8 November, 2026
  */
 @Entity
 @Table(name = "detection_event", indexes = {

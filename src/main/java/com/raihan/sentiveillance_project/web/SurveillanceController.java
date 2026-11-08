@@ -11,7 +11,12 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 
-/** Minimal read/control surface, so progress can be checked without reading the log. */
+/**
+ * Minimal read/control surface, so progress can be checked without reading the log.
+ *
+ * @author Md. Raihan Shikder (Raihan-89)
+ * @date 8 November, 2026
+ */
 @RestController
 @RequestMapping("/api")
 public class SurveillanceController {

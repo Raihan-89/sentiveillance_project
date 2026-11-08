@@ -24,6 +24,9 @@ import java.time.Instant;
  * @param matchScore           score of that best match
  * @param rectLeft             bounding box, frame coordinates
  * @param snapshotPath         JPEG written for this event, or null
+ *
+ * @author Md. Raihan Shikder (Raihan-89)
+ * @date 8 November, 2026
  */
 public record SubjectEventSnapshot(
         String sourceName,

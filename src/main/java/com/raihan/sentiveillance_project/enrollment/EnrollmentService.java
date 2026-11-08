@@ -35,6 +35,9 @@ import java.util.stream.Stream;
  * <p>{@code NBiometricEngine} (rather than {@code NBiometricClient}) is what the SDK's own
  * Java surveillance samples use for watch-list enrolment - see
  * {@code Samples/Surveillance/Java/surveillance-web-sample/.../WatchListService.java}.
+ *
+ * @author Md. Raihan Shikder (Raihan-89)
+ * @date 8 November, 2026
  */
 @Slf4j
 @Service

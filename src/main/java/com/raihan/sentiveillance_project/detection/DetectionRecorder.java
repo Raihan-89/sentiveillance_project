@@ -12,6 +12,9 @@ import org.springframework.transaction.annotation.Transactional;
  * Writes {@link SubjectEventSnapshot}s to PostgreSQL and logs them readably.
  *
  * <p>Runs on the engine's own executor, never on an SDK callback thread.
+ *
+ * @author Md. Raihan Shikder (Raihan-89)
+ * @date 8 November, 2026
  */
 @Slf4j
 @Service

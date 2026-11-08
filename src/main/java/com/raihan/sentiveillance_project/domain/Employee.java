@@ -13,6 +13,9 @@ import java.time.Instant;
  * <p>{@code templateId} is the string handed to {@code NSurveillance.addTemplate(id, bytes)};
  * it is what comes back in {@code NSEDMatchResult.getId()}, so it is the join key between
  * the SDK's watch list and this table.
+ *
+ * @author Md. Raihan Shikder (Raihan-89)
+ * @date 8 November, 2026
  */
 @Entity
 @Table(name = "employee", uniqueConstraints = @UniqueConstraint(columnNames = "template_id"))

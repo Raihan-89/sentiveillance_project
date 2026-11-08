@@ -9,6 +9,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *
  * <p>Deliberately shaped so that moving to 20-30 cameras later only means turning
  * {@link Source} into a list: nothing else in the code assumes "exactly one".
+ *
+ * @author Md. Raihan Shikder (Raihan-89)
+ * @date 8 November, 2026
  */
 @Getter
 @Setter
@@ -21,6 +24,10 @@ public class SentiveillanceProperties {
     private Enrollment enrollment = new Enrollment();
     private Snapshots snapshots = new Snapshots();
 
+    /**
+     * @author Md. Raihan Shikder (Raihan-89)
+     * @date 8 November, 2026
+     */
     @Getter
     @Setter
     public static class Sdk {
@@ -54,9 +61,17 @@ public class SentiveillanceProperties {
         private boolean useGpu = false;
     }
 
+    /**
+     * @author Md. Raihan Shikder (Raihan-89)
+     * @date 8 November, 2026
+     */
     @Getter
     @Setter
     public static class Source {
+        /**
+         * @author Md. Raihan Shikder (Raihan-89)
+         * @date 8 November, 2026
+         */
         public enum Type {
             /** A video file on disk - read through the Media device plugin's FileName parameter. */
             VIDEO_FILE,
@@ -82,6 +97,10 @@ public class SentiveillanceProperties {
         private boolean autoStart = true;
     }
 
+    /**
+     * @author Md. Raihan Shikder (Raihan-89)
+     * @date 8 November, 2026
+     */
     @Getter
     @Setter
     public static class Faces {
@@ -106,6 +125,10 @@ public class SentiveillanceProperties {
         private boolean withDetailsOnly = false;
     }
 
+    /**
+     * @author Md. Raihan Shikder (Raihan-89)
+     * @date 8 November, 2026
+     */
     @Getter
     @Setter
     public static class Enrollment {
@@ -117,6 +140,10 @@ public class SentiveillanceProperties {
         private boolean reEnrollExisting = false;
     }
 
+    /**
+     * @author Md. Raihan Shikder (Raihan-89)
+     * @date 8 November, 2026
+     */
     @Getter
     @Setter
     public static class Snapshots {

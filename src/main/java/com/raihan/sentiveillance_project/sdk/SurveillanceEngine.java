@@ -55,6 +55,9 @@ import java.util.concurrent.atomic.AtomicLong;
  *       a face must reach to be called a known employee, while quality and inter-ocular
  *       distance decide whether a frame is even worth extracting a template from.</li>
  * </ul>
+ *
+ * @author Md. Raihan Shikder (Raihan-89)
+ * @date 8 November, 2026
  */
 @Slf4j
 @Service
@@ -178,6 +181,10 @@ public class SurveillanceEngine {
                 surveillance == null ? 0 : surveillance.getTemplateIds().length);
     }
 
+    /**
+     * @author Md. Raihan Shikder (Raihan-89)
+     * @date 8 November, 2026
+     */
     public record Stats(boolean running, long events, long subjects, long identified, int watchListSize) {
     }
 

@@ -6,6 +6,10 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
+/**
+ * @author Md. Raihan Shikder (Raihan-89)
+ * @date 8 November, 2026
+ */
 @SpringBootApplication
 @EnableConfigurationProperties(SentiveillanceProperties.class)
 public class SentiveillanceProjectApplication {

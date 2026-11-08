@@ -22,6 +22,9 @@ import java.util.EnumSet;
  *
  * <p>Component names and the obtain/isComponentActivated split are copied from the SDK's
  * {@code Samples/Surveillance/Java/surveillance-web-sample/.../SurveillanceService.java}.
+ *
+ *  @author Md. Raihan Shikder (Raihan-89)
+ *  @date 8 November, 2026
  */
 @Slf4j
 @Service
