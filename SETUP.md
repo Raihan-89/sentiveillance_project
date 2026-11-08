@@ -55,22 +55,34 @@ no NVIDIA driver installed.
 > bundled OpenVINO. The card is irrelevant here; we only need the library to exist so the
 > loader is satisfied.
 
-Pick one:
+**Build the stub — no NVIDIA packages:**
 
 ```bash
-# Option A (recommended): the NVIDIA userspace CUDA library only.
-# Does NOT install the kernel module and does NOT touch your display driver.
-# libcuda.so.1 loads and correctly reports "no CUDA device", which is what CPU mode wants.
-sudo apt install libnvidia-compute-580
-
-# Option B: the CUDA driver stub, if you would rather not add NVIDIA packages at all.
-sudo apt install cuda-driver-dev-13-1
-cp /usr/local/cuda-13.1/targets/x86_64-linux/lib/stubs/libcuda.so \
-   my_files/sdk/SentiVeillance_10_1_SDK/Lib/Linux_x86_64/libcuda.so.1
+./scripts/build-cuda-stub.sh
 ```
 
-Option B puts the file inside the SDK tree, where `libNSurveillance.so`'s `RUNPATH $ORIGIN`
-finds it — nothing system-wide changes.
+That compiles `scripts/cuda-stub/libcuda_stub.c` into
+`$SENTIVEILLANCE_SDK_ROOT/Lib/Linux_x86_64/libcuda.so.1` (~15 KB). `libNSurveillance.so`
+imports exactly 7 CUDA driver symbols (`cuInit`, `cuDeviceGetCount`, `cuDeviceGet`,
+`cuDeviceGetAttribute`, `cuDeviceGetName`, `cuDeviceGetUuid`, `cuGetErrorString`) and is not
+linked `BIND_NOW`, so a stub providing those names satisfies the loader; they return
+"no CUDA device" if the SDK ever probes. The file sits inside the SDK tree, found through
+`RUNPATH $ORIGIN` and the `LD_LIBRARY_PATH` that `scripts/run.sh` exports — nothing
+system-wide changes. Re-run the script after moving or re-extracting the SDK. To undo,
+delete the file.
+
+> ### Do NOT install the NVIDIA driver packages for this
+>
+> An earlier version of this document recommended `sudo apt install libnvidia-compute-580`
+> and claimed it would not touch the display driver. **That was wrong.** apt resolves it
+> together with `nvidia-kernel-common-580` and `nvidia-firmware-580`, which install modprobe
+> rules, firmware blobs and initramfs hooks. Branch 580 dropped Kepler support, so on a
+> GT 710 the machine boots into a confused graphics state and the display changes
+> unexpectedly. It was installed on 2026-11-05 and purged on 2026-11-08; the display is back
+> on `nouveau`. Do not reinstall it — the stub above replaces it completely.
+>
+> The same applies to NVIDIA's own stub from `cuda-driver-dev-13-1`: it would work, but it
+> needs NVIDIA's apt repo for a file we can compile in one second from source.
 
 ### 1b. OpenSSL 1.1 — **blocks all video input**
 
