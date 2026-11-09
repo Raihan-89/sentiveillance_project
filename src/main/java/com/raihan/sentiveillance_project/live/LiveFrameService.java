@@ -186,7 +186,11 @@ public class LiveFrameService {
         int dstH = Math.max(1, (int) Math.round(srcH * scale));
 
         BufferedImage full = new BufferedImage(srcW, srcH, BufferedImage.TYPE_INT_RGB);
-        image.writeTo(full, false);
+        // The flag must be true. With false the call returns without transferring the pixels,
+        // leaving a blank BufferedImage - which rendered as a black frame with the detection
+        // boxes drawn on top of nothing. The SDK's own SubjectInfo.nImageToBufferedImage
+        // passes true unconditionally.
+        image.writeTo(full, true);
 
         BufferedImage frame;
         if (scale == 1.0) {
