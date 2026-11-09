@@ -17,6 +17,8 @@ import com.raihan.sentiveillance_project.config.SentiveillanceProperties;
 import com.raihan.sentiveillance_project.detection.DetectionRecorder;
 import com.raihan.sentiveillance_project.detection.SubjectEventSnapshot;
 import com.raihan.sentiveillance_project.domain.Employee;
+import com.raihan.sentiveillance_project.domain.UnknownSubject;
+import com.raihan.sentiveillance_project.domain.UnknownSubjectRepository;
 import com.raihan.sentiveillance_project.live.LiveEventStream;
 import com.raihan.sentiveillance_project.live.LiveFrameService;
 import jakarta.annotation.PreDestroy;
@@ -74,6 +76,8 @@ public class SurveillanceEngine {
     private final LiveFrameService liveFrames;
     /** Pushes events straight to the dashboard, without waiting for the database. */
     private final LiveEventStream liveEvents;
+    /** Review queue of people the engine saw but could not name. */
+    private final UnknownSubjectRepository unknownSubjects;
 
     /**
      * Single-threaded so database rows land in event order; separate from the SDK's threads
@@ -107,6 +111,18 @@ public class SurveillanceEngine {
      * the HTTP transport, is what decides whether the overlay looks live.
      */
     private final AtomicLong detectionLagMillis = new AtomicLong();
+    /** Unknown people queued for naming since startup. */
+    private final AtomicLong unknownCaptured = new AtomicLong();
+    /**
+     * traceIndex -> the watch-list id matched at any point during that visit.
+     *
+     * <p>Needed because recognition and the end of a track are reported separately: matches
+     * arrive on SUBJECT_TRACK events, while SUBJECT_DISAPPEARED carries no {@code bestMatches}
+     * at all. Judging identity from the disappear event alone therefore calls every visit
+     * unidentified - which both left {@code identified} stuck at zero and queued known people
+     * for naming. The entry is removed when the track ends.
+     */
+    private final java.util.Map<Integer, String> identityByTrace = new java.util.concurrent.ConcurrentHashMap<>();
     /**
      * templateId -> employee name, built from the watch list at start. Lets the live push name
      * the person without a database round trip on the callback thread.
@@ -127,13 +143,15 @@ public class SurveillanceEngine {
                               SurveillanceSourceFactory sourceFactory,
                               DetectionRecorder recorder,
                               LiveFrameService liveFrames,
-                              LiveEventStream liveEvents) {
+                              LiveEventStream liveEvents,
+                              UnknownSubjectRepository unknownSubjects) {
         this.properties = properties;
         this.licenseService = licenseService;
         this.sourceFactory = sourceFactory;
         this.recorder = recorder;
         this.liveFrames = liveFrames;
         this.liveEvents = liveEvents;
+        this.unknownSubjects = unknownSubjects;
     }
 
     /**
@@ -199,7 +217,26 @@ public class SurveillanceEngine {
             source = null;
             subscribed = false;
             running = false;
+            identityByTrace.clear();
         }
+    }
+
+    /**
+     * Adds a template to the running watch list, so somebody enrolled from the dashboard is
+     * recognised on their next appearance instead of only after a restart.
+     */
+    public synchronized void addToWatchList(String templateId, byte[] template) {
+        if (surveillance == null) {
+            log.warn("Engine not started - {} will be picked up at the next start", templateId);
+            return;
+        }
+        surveillance.addTemplate(templateId, template);
+        log.info("Watch list now holds {} template(s)", surveillance.getTemplateIds().length);
+    }
+
+    /** Records the display name for a live-enrolled person, so the push can label them. */
+    public void rememberWatchListName(String templateId, String fullName) {
+        watchListNames.put(templateId, fullName);
     }
 
     /** Starts the configured source if it is not already capturing. */
@@ -253,7 +290,7 @@ public class SurveillanceEngine {
     public Stats stats() {
         return new Stats(running, eventsSeen.get(), subjectsSeen.get(), identifiedSeen.get(),
                 surveillance == null ? 0 : surveillance.getTemplateIds().length,
-                nonHumanIgnored.get(), detectionLagMillis.get());
+                nonHumanIgnored.get(), detectionLagMillis.get(), unknownCaptured.get());
     }
 
     /**
@@ -261,7 +298,7 @@ public class SurveillanceEngine {
      * @date 8 November, 2026
      */
     public record Stats(boolean running, long events, long subjects, long identified, int watchListSize,
-                        long nonHumanIgnored, long detectionLagMillis) {
+                        long nonHumanIgnored, long detectionLagMillis, long unknownCaptured) {
     }
 
     // ------------------------------------------------------------------
@@ -475,9 +512,14 @@ public class SurveillanceEngine {
             }
 
             eventsSeen.incrementAndGet();
+            if (snapshot.isIdentified()) {
+                identityByTrace.put(snapshot.traceIndex(), snapshot.matchedTemplateId());
+            }
             if (disappeared) {
                 subjectsSeen.incrementAndGet();
-                if (snapshot.isIdentified()) {
+                // Whoever this visit turned out to be, from the whole track rather than this
+                // one event.
+                if (identityByTrace.remove(snapshot.traceIndex()) != null) {
                     identifiedSeen.incrementAndGet();
                 }
             }
@@ -566,6 +608,12 @@ public class SurveillanceEngine {
                 if (disappeared && properties.getSnapshots().isEnabled()) {
                     snapshotPath = saveSnapshot(best, details.getTraceIndex(), matchedId);
                 }
+                // Only queue people who were never recognised during the entire visit.
+                if (disappeared && hasFaceDetails
+                        && matchedId == null
+                        && !identityByTrace.containsKey(details.getTraceIndex())) {
+                    captureUnknownSubject(details, snapshotPath);
+                }
             } finally {
                 best.dispose();
             }
@@ -586,6 +634,52 @@ public class SurveillanceEngine {
                 left, top, width, height,
                 snapshotPath,
                 null);
+    }
+
+    private void captureUnknownSubject(NSurveillanceEventDetails details, String snapshotPath) {
+        if (!properties.getEnrollment().isCaptureUnknownSubjects()) {
+            return;
+        }
+        com.neurotec.biometrics.NLTemplate template = null;
+        try {
+            template = details.getSubjectTemplate();
+            if (template == null) {
+                return;
+            }
+            com.neurotec.io.NBuffer buffer = template.save();
+            byte[] bytes;
+            try {
+                bytes = buffer.toByteArray();
+            } finally {
+                buffer.dispose();
+            }
+            if (bytes.length == 0) {
+                return;
+            }
+
+            UnknownSubject subject = new UnknownSubject();
+            subject.setSourceName(properties.getSource().getName());
+            subject.setTraceIndex(details.getTraceIndex());
+            subject.setFaceTemplate(bytes);
+            subject.setSnapshotName(snapshotPath == null
+                    ? null
+                    : Path.of(snapshotPath).getFileName().toString());
+
+            eventExecutor.execute(() -> {
+                try {
+                    unknownSubjects.save(subject);
+                    unknownCaptured.incrementAndGet();
+                } catch (Throwable t) {
+                    log.warn("Could not store an unknown subject for review: {}", t.toString());
+                }
+            });
+        } catch (Throwable t) {
+            log.debug("No usable template for unknown trace {}: {}", details.getTraceIndex(), t.toString());
+        } finally {
+            if (template != null) {
+                template.dispose();
+            }
+        }
     }
 
     /**

@@ -31,6 +31,7 @@
   <div class="tile"><span class="tile-label">Watch list</span><span class="tile-value" id="mWatch">&mdash;</span></div>
   <div class="tile" title="Vehicle-class detections discarded by the humans-only filter"><span class="tile-label">Non-human</span><span class="tile-value" id="mNonHuman">&mdash;</span></div>
   <div class="tile" title="How far the detector is behind the camera. This is what makes the overlay trail the video."><span class="tile-label">Detector lag</span><span class="tile-value" id="mLag">&mdash;</span></div>
+  <div class="tile" title="People seen with a face but not matched to anyone enrolled. Name them below to enrol them."><span class="tile-label">To identify</span><span class="tile-value" id="mPending">&mdash;</span></div>
 </section>
 
 <main class="grid">
@@ -72,6 +73,14 @@
     <div class="panel-head"><h2>Recent captures</h2><span class="muted">best frame per visit</span></div>
     <div class="gallery" id="gallery"></div>
   </section>
+</section>
+
+<section class="panel panel-wide">
+  <div class="panel-head">
+    <h2>Unidentified people</h2>
+    <span class="muted">give a name to enrol &mdash; no photo needed, the template came from the video</span>
+  </div>
+  <div class="candidates" id="candidates"></div>
 </section>
 
 <script src="app.js"></script>

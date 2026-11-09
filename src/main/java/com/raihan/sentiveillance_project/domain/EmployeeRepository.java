@@ -13,4 +13,8 @@ public interface EmployeeRepository extends JpaRepository<Employee, Long> {
     Optional<Employee> findByTemplateId(String templateId);
 
     boolean existsByTemplateId(String templateId);
+
+    /** Highest employee number in use, so a person enrolled from video gets the next one. */
+    @org.springframework.data.jpa.repository.Query("select max(e.employeeNo) from Employee e")
+    Integer findMaxEmployeeNo();
 }

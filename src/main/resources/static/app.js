@@ -28,6 +28,8 @@
     watch: document.getElementById('mWatch'),
     nonHuman: document.getElementById('mNonHuman'),
     lag: document.getElementById('mLag'),
+    pending: document.getElementById('mPending'),
+    candidates: document.getElementById('candidates'),
     stage: document.getElementById('stage'),
     stageEmptyTitle: document.getElementById('stageEmptyTitle'),
     stageEmptyHint: document.getElementById('stageEmptyHint'),
@@ -292,6 +294,7 @@
     el.watch.textContent = status.watchListSize;
     el.nonHuman.textContent = status.nonHumanIgnored;
     // Milliseconds under a second, otherwise seconds - a 4-digit ms value is unreadable.
+    el.pending.textContent = status.unknownPending;
     var lag = status.detectionLagMillis;
     el.lag.textContent = lag == null ? '—'
       : lag < 1000 ? lag + 'ms' : (lag / 1000).toFixed(1) + 's';
@@ -357,6 +360,118 @@
     });
   }
 
+  /* People the engine saw with a face but could not match. Naming one posts it straight
+     into the running watch list, so recognition starts on their next appearance - there is
+     no photo to supply and no restart. */
+  function renderCandidates(rows) {
+    el.candidates.textContent = '';
+    if (!rows.length) {
+      var empty = document.createElement('p');
+      empty.className = 'empty';
+      empty.textContent = 'Nobody waiting. Unmatched people with a usable face appear here '
+        + 'when they leave the frame.';
+      el.candidates.appendChild(empty);
+      return;
+    }
+    rows.forEach(function (row) { el.candidates.appendChild(candidateCard(row)); });
+  }
+
+  function candidateCard(row) {
+    var card = document.createElement('div');
+    card.className = 'candidate';
+
+    if (row.snapshot) {
+      var img = document.createElement('img');
+      img.src = 'api/snapshots/' + encodeURIComponent(row.snapshot);
+      img.alt = 'unidentified person, trace ' + row.traceIndex;
+      img.loading = 'lazy';
+      card.appendChild(img);
+    } else {
+      var none = document.createElement('div');
+      none.className = 'no-shot';
+      none.textContent = 'no snapshot';
+      card.appendChild(none);
+    }
+
+    var body = document.createElement('div');
+    body.className = 'candidate-body';
+
+    var meta = document.createElement('div');
+    meta.className = 'candidate-meta';
+    meta.textContent = clockOf(row.seenAt) + ' · trace ' + row.traceIndex
+      + ' · ' + row.templateBytes + ' B';
+
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'Name, then press Enter';
+    input.setAttribute('aria-label', 'Name for this person');
+
+    var error = document.createElement('div');
+    error.className = 'candidate-error';
+    error.hidden = true;
+
+    var actions = document.createElement('div');
+    actions.className = 'candidate-actions';
+    var save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'btn';
+    save.textContent = 'Enrol';
+    var skip = document.createElement('button');
+    skip.type = 'button';
+    skip.className = 'btn btn-ghost';
+    skip.textContent = 'Dismiss';
+    actions.appendChild(save);
+    actions.appendChild(skip);
+
+    function fail(message) {
+      error.textContent = message;
+      error.hidden = false;
+      card.classList.remove('is-busy');
+    }
+
+    function enrol() {
+      var name = input.value.trim();
+      if (!name) { input.focus(); return fail('A name is required.'); }
+      error.hidden = true;
+      card.classList.add('is-busy');
+      fetch('api/unknown/' + row.id + '/enroll', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name })
+      })
+        .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+        .then(function (res) {
+          if (!res.ok) { return fail(res.body.error || 'Could not enrol.'); }
+          card.remove();
+          refreshPanels();
+        })
+        .catch(function () { fail('Could not reach the server.'); });
+    }
+
+    save.addEventListener('click', enrol);
+    input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { enrol(); } });
+    skip.addEventListener('click', function () {
+      card.classList.add('is-busy');
+      fetch('api/unknown/' + row.id, { method: 'DELETE' })
+        .then(function () { card.remove(); refreshPanels(); })
+        .catch(function () { fail('Could not dismiss.'); });
+    });
+
+    body.appendChild(meta);
+    body.appendChild(input);
+    body.appendChild(error);
+    body.appendChild(actions);
+    card.appendChild(body);
+    return card;
+  }
+
+  /* After an enrol the watch list and the queue have both changed. */
+  function refreshPanels() {
+    getJson('api/employees').then(renderEmployees).catch(function () {});
+    getJson('api/unknown?limit=24').then(renderCandidates).catch(function () {});
+    poll();
+  }
+
   function poll() {
     getJson('api/status').then(renderStatus).catch(function () {});
     getJson('api/live/meta').then(renderMeta).catch(function () {});
@@ -382,7 +497,12 @@
   poll();
   setInterval(poll, POLL_MILLIS);
 
-  getJson('api/employees').then(renderEmployees).catch(function () {});
+  refreshPanels();
+  /* The queue is re-read on a slow timer as well: new candidates only appear when somebody
+     leaves the frame, which no live event announces. */
+  setInterval(function () {
+    getJson('api/unknown?limit=24').then(renderCandidates).catch(function () {});
+  }, 10000);
   /* The feed and the gallery are deliberately NOT seeded from /api/detections. They used to
      be, which made a refresh look like cached output: those rows come from PostgreSQL, so
      old events reappeared on every reload. Both panels now show only what arrives live over

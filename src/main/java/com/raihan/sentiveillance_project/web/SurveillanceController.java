@@ -4,6 +4,7 @@ import com.raihan.sentiveillance_project.domain.DetectionEvent;
 import com.raihan.sentiveillance_project.domain.DetectionEventRepository;
 import com.raihan.sentiveillance_project.domain.Employee;
 import com.raihan.sentiveillance_project.domain.EmployeeRepository;
+import com.raihan.sentiveillance_project.domain.UnknownSubjectRepository;
 import com.raihan.sentiveillance_project.sdk.SurveillanceEngine;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.web.bind.annotation.*;
@@ -24,19 +25,23 @@ public class SurveillanceController {
     private final SurveillanceEngine engine;
     private final DetectionEventRepository detectionEvents;
     private final EmployeeRepository employees;
+    private final UnknownSubjectRepository unknownSubjects;
 
     public SurveillanceController(SurveillanceEngine engine,
                                   DetectionEventRepository detectionEvents,
-                                  EmployeeRepository employees) {
+                                  EmployeeRepository employees,
+                                  UnknownSubjectRepository unknownSubjects) {
         this.engine = engine;
         this.detectionEvents = detectionEvents;
         this.employees = employees;
+        this.unknownSubjects = unknownSubjects;
     }
 
     @GetMapping("/status")
     public Map<String, Object> status() {
         SurveillanceEngine.Stats stats = engine.stats();
-        return Map.of(
+        // LinkedHashMap, not Map.of: that caps out at ten pairs and this is already there.
+        return mapOf(
                 "running", stats.running(),
                 "events", stats.events(),
                 "subjects", stats.subjects(),
@@ -44,8 +49,18 @@ public class SurveillanceController {
                 "watchListSize", stats.watchListSize(),
                 "nonHumanIgnored", stats.nonHumanIgnored(),
                 "detectionLagMillis", stats.detectionLagMillis(),
+                "unknownPending", unknownSubjects.countByEnrolledEmployeeIdIsNull(),
                 "storedEvents", detectionEvents.count(),
                 "employees", employees.count());
+    }
+
+    /** Ordered map from alternating key/value pairs, with no ten-entry ceiling. */
+    private static Map<String, Object> mapOf(Object... keysAndValues) {
+        Map<String, Object> map = new java.util.LinkedHashMap<>();
+        for (int i = 0; i + 1 < keysAndValues.length; i += 2) {
+            map.put((String) keysAndValues[i], keysAndValues[i + 1]);
+        }
+        return map;
     }
 
     @GetMapping("/employees")
