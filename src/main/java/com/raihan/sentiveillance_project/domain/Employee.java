@@ -42,9 +42,7 @@ public class Employee {
     @Column(name = "photo_path", length = 1000)
     private String photoPath;
 
-    /** Serialised NTemplate (subject.getTemplate().save().toByteArray()). */
-    @Lob
-    @Column(name = "face_template", nullable = false)
+    @Column(name = "face_template", nullable = false, columnDefinition = "bytea")
     private byte[] faceTemplate;
 
     @Column(name = "enrolled_at", nullable = false)

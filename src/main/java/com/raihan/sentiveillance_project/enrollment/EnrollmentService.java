@@ -91,7 +91,7 @@ public class EnrollmentService {
                 try {
                     enrollOne(engine, photo, cfg.isReEnrollExisting()).ifPresent(enrolled::add);
                 } catch (Exception e) {
-                    log.error("Enrolment failed for {}: {}", photo.getFileName(), e.toString());
+                    log.error("Enrolment failed for {}", photo.getFileName(), e);
                 }
             }
 

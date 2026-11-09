@@ -1,6 +1,7 @@
 package com.raihan.sentiveillance_project.sdk;
 
 import com.neurotec.biometrics.NTemplateSize;
+import com.neurotec.devices.NCamera;
 import com.neurotec.geometry.NRect;
 import com.neurotec.images.NImage;
 import com.neurotec.images.NImageFormat;
@@ -80,6 +81,8 @@ public class SurveillanceEngine {
 
     @Getter
     private volatile boolean running;
+    /** Whether {@link #subscribe()} actually ran - listeners must only be removed if added. */
+    private boolean subscribed;
     private final AtomicLong eventsSeen = new AtomicLong();
     private final AtomicLong subjectsSeen = new AtomicLong();
     private final AtomicLong identifiedSeen = new AtomicLong();
@@ -116,21 +119,56 @@ public class SurveillanceEngine {
 
         log.info("Creating NSurveillance (loading models from {}/Bin/Data) ...", properties.getSdk().getRoot());
         surveillance = new NSurveillance();
-        applySettings(surveillance);
-        loadWatchList(watchList);
+        try {
+            applySettings(surveillance);
+            loadWatchList(watchList);
 
-        source = sourceFactory.create(surveillance);
-        surveillance.getSources().add(source);
+            source = sourceFactory.create(surveillance);
+            surveillance.getSources().add(source);
 
-        subscribe();
+            subscribe();
+            subscribed = true;
 
-        if (properties.getSource().isAutoStart()) {
-            log.info("Starting source '{}' ...", properties.getSource().getName());
-            // startSource starts capture for this one source. surveillance.start() would
-            // start every source at once - the per-source call is what scales to many cameras.
-            surveillance.startSource(source);
-        } else {
-            log.info("autoStart is false - call POST /api/surveillance/start to begin");
+            if (properties.getSource().isAutoStart()) {
+                log.info("Starting source '{}' ...", properties.getSource().getName());
+                // startSource starts capture for this one source. surveillance.start() would
+                // start every source at once - the per-source call is what scales to many cameras.
+                surveillance.startSource(source);
+            } else {
+                log.info("autoStart is false - call POST /api/surveillance/start to begin");
+            }
+        } catch (RuntimeException | Error e) {
+            // A half-built engine must not be left for @PreDestroy to tear down: calling
+            // stop()/dispose() on one that never finished configuring aborts the JVM inside
+            // glibc ("corrupted double-linked list", exit 134), which buries the real cause.
+            // Release it here, in the reverse order it was built, then rethrow.
+            discardAfterFailedStart();
+            throw e;
+        }
+    }
+
+    /** Best-effort teardown of an engine whose {@link #start} did not complete. */
+    private void discardAfterFailedStart() {
+        try {
+            if (subscribed) {
+                unsubscribe();
+            }
+            if (source != null) {
+                surveillance.getSources().remove(source);
+                disconnectCamera(source);
+            }
+        } catch (Throwable t) {
+            log.warn("Cleanup after failed start was incomplete: {}", t.toString());
+        } finally {
+            try {
+                surveillance.dispose();
+            } catch (Throwable t) {
+                log.warn("Could not dispose the partially built engine: {}", t.toString());
+            }
+            surveillance = null;
+            source = null;
+            subscribed = false;
+            running = false;
         }
     }
 
@@ -152,10 +190,14 @@ public class SurveillanceEngine {
         }
         log.info("Shutting down surveillance ...");
         try {
-            unsubscribe();
+            if (subscribed) {
+                unsubscribe();
+                subscribed = false;
+            }
             if (source != null) {
                 surveillance.stopSource(source);
                 surveillance.getSources().remove(source);
+                disconnectCamera(source);
             }
             surveillance.stop();
         } catch (Exception e) {
@@ -206,7 +248,12 @@ public class SurveillanceEngine {
         // The recognition decision threshold, in SDK score units.
         s.setMatchingThreshold(faces.getMatchingThreshold());
         s.setMatchingMaximalResultCount(faces.getMatchingMaximalResultCount());
-        s.setFacesWithDetailsOnly(faces.isWithDetailsOnly());
+        // Deliberately NOT calling setFacesWithDetailsOnly(): the Java binding still has the
+        // method, but SentiVeillance 10.1's libNSurveillance.so does not expose the
+        // 'Faces.WithDetailsOnly' property behind it, so the call throws
+        // NIllegalArgumentException("Property with the specified name not found"). The SDK's
+        // own samples never set it either. 'Faces.ConfidenceThreshold' is the supported knob
+        // in this area if detection strictness ever needs tuning.
 
         log.info("Engine settings - gpu={}, matchingThreshold={}, quality>={}, interOcular>={}px, template={}",
                 properties.getSdk().isUseGpu(),
@@ -240,6 +287,32 @@ public class SurveillanceEngine {
         surveillance.removeSubjectAppearedListener(onSubjectAppeared);
         surveillance.removeSubjectTrackListener(onSubjectTrack);
         surveillance.removeSubjectDisappearedListener(onSubjectDisappeared);
+    }
+
+    /**
+     * Hands the camera back to the device manager that produced it.
+     *
+     * <p>{@link SurveillanceSourceFactory} obtains it through
+     * {@code NDeviceManager.connectToDevice}, so something has to disconnect it again.
+     * Skipping this leaves the NdmMedia plugin holding a live device while the engine is
+     * disposed, and the process then dies during native teardown - either
+     * {@code NError (-7) NdmMedia is not initialized} or a glibc abort
+     * ("corrupted double-linked list", exit 134) after all Java shutdown logging is done.
+     *
+     * <p>The {@code isDisconnectable()} guard and the ordering are taken from the SDK's own
+     * {@code SurveillanceService.remove(SourceState)} in the Java web sample.
+     */
+    private void disconnectCamera(NSurveillanceSource s) {
+        try {
+            NCamera camera = s.getCamera();
+            if (camera == null || !camera.isDisconnectable()) {
+                return;
+            }
+            surveillance.getDeviceManager().disconnectFromDevice(camera);
+            log.info("Camera disconnected from the device manager");
+        } catch (Throwable t) {
+            log.warn("Could not disconnect the camera: {}", t.toString());
+        }
     }
 
     private void requireStarted() {
@@ -383,6 +456,16 @@ public class SurveillanceEngine {
         } catch (Exception e) {
             log.warn("Could not save snapshot for trace {}: {}", traceIndex, e.toString());
             return null;
+        } finally {
+            // Must be released here. getOriginalImage(false) hands back a wrapper around a
+            // buffer the SDK still owns, and the caller disposes the parent details object
+            // immediately after this returns. Leaving the wrapper alive means its native
+            // handle is freed later, by the cleaner, against memory that is already gone -
+            // which is what aborted the JVM at exit with "corrupted double-linked list".
+            // The SDK's own web sample disposes it the same way, in EventData.dispose().
+            if (image != null) {
+                image.dispose();
+            }
         }
     }
 }

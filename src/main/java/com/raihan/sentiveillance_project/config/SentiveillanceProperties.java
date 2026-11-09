@@ -121,8 +121,6 @@ public class SentiveillanceProperties {
         private int minimalInterOcularDistance = 24;
         /** Template size used for the surveillance engine: COMPACT, SMALL, MEDIUM or LARGE. */
         private String templateSize = "LARGE";
-        /** Only raise subject events once facial details have been extracted. */
-        private boolean withDetailsOnly = false;
     }
 
     /**
