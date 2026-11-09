@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SentiVeillance Console</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true"></span>
+    <div>
+      <h1>SentiVeillance</h1>
+      <p class="sub" id="sourceLine">loading source&hellip;</p>
+    </div>
+  </div>
+  <div class="controls">
+    <span class="pill" id="runPill"><span class="dot"></span><span id="runText">checking</span></span>
+    <button class="btn" id="startBtn" type="button">Start source</button>
+    <button class="btn btn-ghost" id="stopBtn" type="button">Stop</button>
+  </div>
+</header>
+
+<section class="tiles" aria-label="Counters">
+  <div class="tile"><span class="tile-label">Events</span><span class="tile-value" id="mEvents">&mdash;</span></div>
+  <div class="tile"><span class="tile-label">Subjects</span><span class="tile-value" id="mSubjects">&mdash;</span></div>
+  <div class="tile"><span class="tile-label">Identified</span><span class="tile-value" id="mIdentified">&mdash;</span></div>
+  <div class="tile"><span class="tile-label">Stored rows</span><span class="tile-value" id="mStored">&mdash;</span></div>
+  <div class="tile"><span class="tile-label">Watch list</span><span class="tile-value" id="mWatch">&mdash;</span></div>
+</section>
+
+<main class="grid">
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Live view</h2>
+      <div class="legend">
+        <span class="key"><i class="swatch swatch-known"></i>identified</span>
+        <span class="key"><i class="swatch swatch-unknown"></i>tracked</span>
+        <span class="muted" id="frameInfo"></span>
+      </div>
+    </div>
+    <div class="stage" id="stage">
+      <img id="video" alt="Live camera feed">
+      <canvas id="overlay"></canvas>
+      <div class="stage-empty" id="stageEmpty">
+        <p>Waiting for the first frame</p>
+        <small>Frames are only encoded while this page is open.</small>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Event feed</h2>
+      <span class="muted" id="feedState">connecting&hellip;</span>
+    </div>
+    <ul class="feed" id="feed"></ul>
+  </section>
+</main>
+
+<section class="grid grid-bottom">
+  <section class="panel">
+    <div class="panel-head"><h2>Watch list</h2><span class="muted" id="watchState"></span></div>
+    <div class="cards" id="watchList"></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Recent captures</h2><span class="muted">best frame per visit</span></div>
+    <div class="gallery" id="gallery"></div>
+  </section>
+</section>
+
+<script src="app.js"></script>
+</body>
+</html>

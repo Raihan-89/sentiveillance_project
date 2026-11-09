@@ -17,6 +17,7 @@ import com.raihan.sentiveillance_project.config.SentiveillanceProperties;
 import com.raihan.sentiveillance_project.detection.DetectionRecorder;
 import com.raihan.sentiveillance_project.detection.SubjectEventSnapshot;
 import com.raihan.sentiveillance_project.domain.Employee;
+import com.raihan.sentiveillance_project.live.LiveFrameService;
 import jakarta.annotation.PreDestroy;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -68,6 +69,8 @@ public class SurveillanceEngine {
     private final LicenseService licenseService;
     private final SurveillanceSourceFactory sourceFactory;
     private final DetectionRecorder recorder;
+    /** Feeds the browser dashboard; encodes nothing unless a page is actually watching. */
+    private final LiveFrameService liveFrames;
 
     /**
      * Single-threaded so database rows land in event order; separate from the SDK's threads
@@ -99,11 +102,13 @@ public class SurveillanceEngine {
     public SurveillanceEngine(SentiveillanceProperties properties,
                               LicenseService licenseService,
                               SurveillanceSourceFactory sourceFactory,
-                              DetectionRecorder recorder) {
+                              DetectionRecorder recorder,
+                              LiveFrameService liveFrames) {
         this.properties = properties;
         this.licenseService = licenseService;
         this.sourceFactory = sourceFactory;
         this.recorder = recorder;
+        this.liveFrames = liveFrames;
     }
 
     /**
@@ -277,12 +282,15 @@ public class SurveillanceEngine {
 
     private void subscribe() {
         surveillance.addRunningChangeListener(onRunningChanged);
+        surveillance.addImageCapturedListener(liveFrames.listener());
         surveillance.addSubjectAppearedListener(onSubjectAppeared);
         surveillance.addSubjectTrackListener(onSubjectTrack);
         surveillance.addSubjectDisappearedListener(onSubjectDisappeared);
     }
 
     private void unsubscribe() {
+        surveillance.removeImageCapturedListener(liveFrames.listener());
+        liveFrames.clear();
         surveillance.removeRunningChangeListener(onRunningChanged);
         surveillance.removeSubjectAppearedListener(onSubjectAppeared);
         surveillance.removeSubjectTrackListener(onSubjectTrack);

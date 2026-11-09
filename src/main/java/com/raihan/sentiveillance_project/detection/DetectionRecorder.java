@@ -4,6 +4,7 @@ import com.raihan.sentiveillance_project.domain.DetectionEvent;
 import com.raihan.sentiveillance_project.domain.DetectionEventRepository;
 import com.raihan.sentiveillance_project.domain.Employee;
 import com.raihan.sentiveillance_project.domain.EmployeeRepository;
+import com.raihan.sentiveillance_project.live.LiveEventStream;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,10 +23,14 @@ public class DetectionRecorder {
 
     private final DetectionEventRepository detectionEvents;
     private final EmployeeRepository employees;
+    private final LiveEventStream liveEvents;
 
-    public DetectionRecorder(DetectionEventRepository detectionEvents, EmployeeRepository employees) {
+    public DetectionRecorder(DetectionEventRepository detectionEvents,
+                             EmployeeRepository employees,
+                             LiveEventStream liveEvents) {
         this.detectionEvents = detectionEvents;
         this.employees = employees;
+        this.liveEvents = liveEvents;
     }
 
     @Transactional
@@ -64,6 +69,14 @@ public class DetectionRecorder {
         String who = employee != null
                 ? employee.getFullName() + " (#" + employee.getEmployeeNo() + ")"
                 : snapshot.matchedTemplateId() != null ? snapshot.matchedTemplateId() : "UNKNOWN";
+
+        // Push to any open dashboard. Guarded: the browser is never allowed to affect
+        // whether an event was recorded - the row above is already committed.
+        try {
+            liveEvents.publish(snapshot, employee == null ? null : employee.getFullName());
+        } catch (Exception e) {
+            log.debug("Could not push event to the dashboard: {}", e.toString());
+        }
 
         log.info("[{}] {} trace={} {} score={} face={} box={}x{} frame={}",
                 snapshot.sourceName(),

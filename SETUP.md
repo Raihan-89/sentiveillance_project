@@ -132,6 +132,51 @@ sudo -u postgres psql -d sentiveillance -c "GRANT ALL ON SCHEMA public TO raihan
 `spring.jpa.hibernate.ddl-auto=update` creates the `employee` and `detection_event` tables
 on first run, so no SQL migration is needed yet.
 
+### 1d-bis. The SDK's broken RUNPATHs - handled automatically
+
+The bundled native libraries cannot be found by the dynamic loader on their own:
+
+- the nine `libopencv_*.so.4.4` files were built with `RUNPATH=/tmp/working/build/lib`
+  (Neurotechnology's build machine), and `libopencv_core` has a row of empty entries;
+- the ffmpeg / VLC libraries (`libavformat`, `libavcodec`, ...) carry **no** `RUNPATH` at all
+  and are `dlopen`ed by `libNMedia.so` at runtime rather than linked.
+
+The loader resolves a library's `DT_NEEDED` entries using *that library's own* runpath, so the
+`$ORIGIN` runpath on `libNSurveillance.so` covers its direct dependencies but nothing they
+pull in underneath. Two different failures result:
+
+| missing group | symptom |
+|---|---|
+| OpenCV | `UnsatisfiedLinkError: libopencv_features2d.so.4.4: cannot open shared object file` at `new NSurveillance()` |
+| ffmpeg / VLC | source connects, immediately reports `running = false`, **zero events**, nothing in the log |
+
+`jna.library.path` does not help: it tells JNA where `libNSurveillance.so` is, not how the OS
+loader walks that library's dependency tree. `LD_LIBRARY_PATH` does work, but it is read when
+the process starts, so it cannot be set from inside `main()`.
+
+**`SdkBootstrap.preloadBrokenRunpathLibraries` solves this in-process**: it loads all 20
+affected libraries by absolute path, in dependency order, before anything touches a
+`com.neurotec.*` class. `System.load` takes an absolute path, so the broken runpaths never
+apply, and once a library is in the process the loader satisfies later `DT_NEEDED` and
+`dlopen` requests by SONAME from what is already loaded. Every one of these files has a
+SONAME equal to its file name, which is exactly the string the dependents ask for.
+
+It prints what it did:
+
+```
+[SdkBootstrap] native preload: 20/20 present (works around the SDK's unusable RUNPATHs)
+```
+
+**The practical effect: no `LD_LIBRARY_PATH` is needed.** Running from IntelliJ, from a plain
+`java -cp ...`, or from `scripts/run.sh` all work identically. `scripts/run.sh` still exports
+the variable (harmless, and a safety net if a future SDK adds a library this list misses), and
+`.idea/runConfigurations/Sentiveillance__with_SDK_.xml` ("Sentiveillance (with SDK)") sets it
+too. If the preload is ever incomplete, `SdkBootstrap` falls back to printing the
+`LD_LIBRARY_PATH` instructions.
+
+Verified without `LD_LIBRARY_PATH`: 95 detections, `John (#1) score=198`,
+`Jenifa (#2) score=186`, no errors.
+
 ### 1e. A licence — **CURRENTLY BLOCKING**
 
 `new NSurveillance()` fails unless a licence has been obtained, and `NBiometricEngine` is
