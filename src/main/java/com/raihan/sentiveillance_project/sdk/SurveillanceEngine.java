@@ -114,6 +114,19 @@ public class SurveillanceEngine {
     /** Unknown people queued for naming since startup. */
     private final AtomicLong unknownCaptured = new AtomicLong();
     /**
+     * Templates currently in the engine's watch list, counted here rather than asked of the
+     * SDK.
+     *
+     * <p>{@code NSurveillance.getTemplateIds()} cannot be called on an empty watch list: the
+     * binding reads a string array out of a zero-length block and throws
+     * {@code IndexOutOfBoundsException: Bounds exceeds available space : size=0, offset=8}
+     * from inside JNA. It only surfaces once the employee table is empty - with even one
+     * template enrolled the call works - so it stayed hidden until the tables were dropped.
+     * Every /api/status poll hit it, which is twice a second with the dashboard open.
+     */
+    private final java.util.concurrent.atomic.AtomicInteger watchListSize =
+            new java.util.concurrent.atomic.AtomicInteger();
+    /**
      * traceIndex -> the watch-list id matched at any point during that visit.
      *
      * <p>Needed because recognition and the end of a track are reported separately: matches
@@ -218,6 +231,7 @@ public class SurveillanceEngine {
             subscribed = false;
             running = false;
             identityByTrace.clear();
+            watchListSize.set(0);
         }
     }
 
@@ -231,7 +245,7 @@ public class SurveillanceEngine {
             return;
         }
         surveillance.addTemplate(templateId, template);
-        log.info("Watch list now holds {} template(s)", surveillance.getTemplateIds().length);
+        log.info("Watch list now holds {} template(s)", watchListSize.incrementAndGet());
     }
 
     /** Records the display name for a live-enrolled person, so the push can label them. */
@@ -289,7 +303,7 @@ public class SurveillanceEngine {
 
     public Stats stats() {
         return new Stats(running, eventsSeen.get(), subjectsSeen.get(), identifiedSeen.get(),
-                surveillance == null ? 0 : surveillance.getTemplateIds().length,
+                surveillance == null ? 0 : watchListSize.get(),
                 nonHumanIgnored.get(), detectionLagMillis.get(), unknownCaptured.get());
     }
 
@@ -415,6 +429,7 @@ public class SurveillanceEngine {
             watchListNames.put(employee.getTemplateId(), employee.getFullName());
             added++;
         }
+        watchListSize.set(added);
         log.info("Watch list loaded: {} template(s)", added);
     }
 

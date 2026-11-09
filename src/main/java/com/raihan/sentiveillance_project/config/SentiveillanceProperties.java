@@ -245,9 +245,21 @@ public class SentiveillanceProperties {
     @Getter
     @Setter
     public static class Enrollment {
-        /** Enroll every image in this directory into the watch list at startup. */
-        private boolean enabled = true;
-        /** Directory holding Employee_<number>_<name>.<ext> photos. */
+        /**
+         * Scan {@link #photosDirectory} at startup and build a template from every photo.
+         *
+         * <p>Off by default: people are enrolled from the video instead. The engine detects
+         * somebody, fails to match them, queues them with the face template it captured during
+         * the visit, and a name is all that is needed to add them to the watch list - see
+         * {@code VideoEnrollmentService}. That template comes from the real camera at the real
+         * angle, which measured better than a photo-derived one (score 234 against 109-212).
+         *
+         * <p>With this off, startup neither reads the photo directory nor constructs an
+         * {@code NBiometricEngine} at all; the watch list is simply loaded from the database.
+         * Turn it on if you want to seed the watch list from files.
+         */
+        private boolean enabled = false;
+        /** Directory holding Employee_<number>_<name>.<ext> photos. Only read when enabled. */
         private String photosDirectory = "my_files";
         /** Re-extract templates for employees already stored in the database. */
         private boolean reEnrollExisting = false;
