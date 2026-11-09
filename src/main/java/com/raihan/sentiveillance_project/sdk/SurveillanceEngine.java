@@ -521,6 +521,25 @@ public class SurveillanceEngine {
             } catch (Exception e) {
                 log.debug("Could not push event to the dashboard: {}", e.toString());
             }
+            // Tell the preview encoder where this subject is, so the next frame carries the
+            // box. Burned into the image server-side rather than drawn by the page - see
+            // LiveFrameService.render.
+            if (disappeared) {
+                liveFrames.hideBox(snapshot.traceIndex());
+            } else if (snapshot.rectLeft() != null) {
+                String identity = snapshot.matchedTemplateId() == null
+                        ? identityByTrace.get(snapshot.traceIndex())
+                        : snapshot.matchedTemplateId();
+                String name = identity == null ? null : watchListNames.getOrDefault(identity, identity);
+                String label = name == null
+                        ? "unknown"
+                        : name + (snapshot.matchScore() == null ? "" : " " + snapshot.matchScore());
+                liveFrames.showBox(snapshot.traceIndex(),
+                        snapshot.rectLeft(), snapshot.rectTop(),
+                        snapshot.rectWidth(), snapshot.rectHeight(),
+                        label, name != null);
+            }
+
             if (snapshot.eventTime() != null) {
                 detectionLagMillis.set(Math.max(0,
                         java.time.Duration.between(snapshot.eventTime(), Instant.now()).toMillis()));
@@ -621,7 +640,8 @@ public class SurveillanceEngine {
                 }
                 hasFaceDetails = best.getAttributesContainsDetails();
                 if (disappeared && properties.getSnapshots().isEnabled()) {
-                    snapshotPath = saveSnapshot(best, details.getTraceIndex(), matchedId);
+                    snapshotPath = saveSnapshot(best, details.getTraceIndex(), matchedId, rect,
+                            hasFaceDetails);
                 }
                 // Only queue people who were never recognised during the entire visit.
                 if (disappeared && hasFaceDetails
@@ -708,13 +728,26 @@ public class SurveillanceEngine {
      *
      * @return where the file will be written, or null if there was nothing to capture
      */
-    private String saveSnapshot(NSurveillanceEventDetails best, int traceIndex, String matchedId) {
+    private String saveSnapshot(NSurveillanceEventDetails best, int traceIndex, String matchedId,
+                                NRect rect, boolean hasFaceDetails) {
         NImage image = null;
+        NImage cropped = null;
         try {
             // false = the SDK keeps ownership of the pixel buffer, same as its own samples.
             image = best.getOriginalImage(false);
             if (image == null) {
                 return null;
+            }
+            // Crop to the person. A full 2160x3840 frame with several people in it is useless
+            // for deciding who you are about to enrol. The face rectangle is preferred over the
+            // detection rectangle: the latter is a whole body, which for somebody standing close
+            // is most of the frame again and leaves their face a small part of a large image.
+            cropped = cropToFace(image, best, hasFaceDetails);
+            if (cropped == null) {
+                cropped = cropToSubject(image, rect);
+            }
+            if (cropped != null) {
+                image = cropped;
             }
             Path dir = Path.of(properties.getSnapshots().getDirectory()).toAbsolutePath().normalize();
             String name = String.format("%s_trace%03d_%s.jpg",
@@ -752,6 +785,93 @@ public class SurveillanceEngine {
             if (image != null) {
                 image.dispose();
             }
+            if (cropped != null && cropped != image) {
+                cropped.dispose();
+            }
+        }
+    }
+
+    /**
+     * Cuts out the face, using the geometry the face detector itself reported.
+     *
+     * <p>{@code NLAttributes.getBoundingRect()} is the face box rather than the body box the
+     * tracker reports, which is what makes the resulting image actually tell you who this is.
+     * Same approach as the SDK's {@code SubjectInfo.cutFaceThumbnail}. Inflated generously -
+     * a face cropped exactly to its bounding box is hard to recognise, so this keeps hair,
+     * chin and some shoulder.
+     *
+     * @return the face crop, or null when the event carried no face geometry
+     */
+    private NImage cropToFace(NImage image, NSurveillanceEventDetails best, boolean hasFaceDetails) {
+        if (!hasFaceDetails) {
+            return null;
+        }
+        com.neurotec.biometrics.NLAttributes attributes = null;
+        try {
+            attributes = best.getAttributes(false);
+            if (attributes == null) {
+                return null;
+            }
+            NRect face = attributes.getBoundingRect();
+            if (face == null || face.width() <= 0 || face.height() <= 0) {
+                return null;
+            }
+            double padding = properties.getSnapshots().getFacePadding();
+            int padX = (int) Math.round(face.width() * padding);
+            int padY = (int) Math.round(face.height() * padding);
+            int left = Math.max(0, face.left - padX);
+            int top = Math.max(0, face.top - padY);
+            int right = Math.min(image.getWidth(), face.left + face.width() + padX);
+            int bottom = Math.min(image.getHeight(), face.top + face.height() + padY);
+            if (right - left <= 0 || bottom - top <= 0) {
+                return null;
+            }
+            return image.crop(left, top, right - left, bottom - top);
+        } catch (Throwable t) {
+            log.debug("No face geometry to crop: {}", t.toString());
+            return null;
+        } finally {
+            if (attributes != null) {
+                attributes.dispose();
+            }
+        }
+    }
+
+    /**
+     * Cuts the subject out of the frame, with some room around them for context.
+     *
+     * <p>The rectangle is inflated by {@code snapshots.subjectPadding} of its own size on each
+     * axis and then clamped to the frame, so a person at the very edge still yields a valid
+     * crop rather than nothing. {@code NImage.crop} is native, so this costs far less than
+     * encoding the whole frame would have.
+     *
+     * @return the crop, or null to fall back to the full frame
+     */
+    private NImage cropToSubject(NImage image, NRect rect) {
+        if (rect == null) {
+            return null;
+        }
+        try {
+            double padding = properties.getSnapshots().getSubjectPadding();
+            int w = rect.width();
+            int h = rect.height();
+            if (w <= 0 || h <= 0) {
+                return null;
+            }
+            int padX = (int) Math.round(w * padding);
+            int padY = (int) Math.round(h * padding);
+
+            int left = Math.max(0, rect.left - padX);
+            int top = Math.max(0, rect.top - padY);
+            int right = Math.min(image.getWidth(), rect.left + w + padX);
+            int bottom = Math.min(image.getHeight(), rect.top + h + padY);
+            if (right - left <= 0 || bottom - top <= 0) {
+                return null;
+            }
+            return image.crop(left, top, right - left, bottom - top);
+        } catch (Throwable t) {
+            log.debug("Could not crop the snapshot for trace: {}", t.toString());
+            return null;
         }
     }
 }

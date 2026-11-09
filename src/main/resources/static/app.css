@@ -153,7 +153,8 @@ h2 { margin: 0; font-size: 14px; font-weight: 600; }
 
 .stage { position: relative; background: var(--bg-sunken); line-height: 0; }
 .stage img { display: block; width: 100%; height: auto; }
-.stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+/* The boxes are drawn into the JPEG by LiveFrameService, so there is no overlay canvas:
+   nothing client-side has to scale source coordinates or guess which frame a box belongs to. */
 
 .stage-empty {
   position: absolute; inset: 0;

@@ -1,8 +1,9 @@
 /* SentiVeillance console.
  *
  * Three data paths:
- *   - the video is an MJPEG <img>, decoded by the browser, nothing to drive here;
- *   - detections arrive over SSE (/api/live/events) and drive the feed and the overlay;
+ *   - the video is a still refreshed on a timer; the detection boxes are already drawn
+ *     into it by the server, so there is nothing to position here;
+ *   - detections arrive over SSE (/api/live/events) and drive the feed and gallery;
  *   - /api/status is polled as the authoritative counter source, so the tiles stay
  *     correct even if a browser missed events while the tab was in the background.
  */
@@ -12,7 +13,6 @@
   var POLL_MILLIS = 2000;
   /* Matches sentiveillance.live.preview-interval-millis; asking faster only wastes requests. */
   var FRAME_INTERVAL_MILLIS = 200;
-  var BOX_LIFETIME_MILLIS = 1200;   // how long a box stays after its last update
   var FEED_LIMIT = 60;
 
   var el = {
@@ -34,7 +34,6 @@
     stageEmptyTitle: document.getElementById('stageEmptyTitle'),
     stageEmptyHint: document.getElementById('stageEmptyHint'),
     video: document.getElementById('video'),
-    overlay: document.getElementById('overlay'),
     frameInfo: document.getElementById('frameInfo'),
     feed: document.getElementById('feed'),
     feedState: document.getElementById('feedState'),
@@ -43,8 +42,6 @@
     gallery: document.getElementById('gallery')
   };
 
-  /* traceIndex -> { rect, label, identified, at } */
-  var active = new Map();
   var sourceDims = { width: 0, height: 0 };
   var seenShots = new Set();
 
@@ -124,76 +121,7 @@
     el.stage.classList.add('has-frame');
   }
 
-  function resizeOverlay() {
-    var w = el.video.clientWidth;
-    var h = el.video.clientHeight;
-    if (!w || !h) { return false; }
-    var dpr = window.devicePixelRatio || 1;
-    if (el.overlay.width !== Math.round(w * dpr) || el.overlay.height !== Math.round(h * dpr)) {
-      el.overlay.width = Math.round(w * dpr);
-      el.overlay.height = Math.round(h * dpr);
-    }
-    return true;
-  }
-
-  function drawOverlay() {
-    requestAnimationFrame(drawOverlay);
-    var ctx = el.overlay.getContext('2d');
-    if (!ctx || !resizeOverlay()) { return; }
-
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, el.overlay.width, el.overlay.height);
-
-    // Natural size of the decoded frame is the most reliable source scale; fall back to
-    // whatever /api/live/meta reported.
-    var srcW = el.video.naturalWidth || sourceDims.width;
-    var srcH = el.video.naturalHeight || sourceDims.height;
-    if (!srcW || !srcH) { return; }
-
-    if (el.video.naturalWidth) { markFrameArrived(); }
-
-    var scaleX = el.overlay.width / srcW;
-    var scaleY = el.overlay.height / srcH;
-    var now = Date.now();
-    var font = Math.max(11, Math.round(el.overlay.width / 64));
-
-    active.forEach(function (entry, trace) {
-      if (now - entry.at > BOX_LIFETIME_MILLIS) { active.delete(trace); return; }
-
-      var x = entry.rect.left * scaleX;
-      var y = entry.rect.top * scaleY;
-      var w = entry.rect.width * scaleX;
-      var h = entry.rect.height * scaleY;
-      var colour = entry.identified ? '#37d67a' : '#ffb347';
-
-      ctx.lineWidth = Math.max(2, el.overlay.width / 480);
-      ctx.strokeStyle = colour;
-      ctx.strokeRect(x, y, w, h);
-
-      ctx.font = '600 ' + font + 'px ui-sans-serif, system-ui, sans-serif';
-      var text = entry.label;
-      var padding = font * 0.4;
-      var textWidth = ctx.measureText(text).width;
-      var boxH = font + padding * 2;
-      var boxY = y - boxH < 0 ? y + h : y - boxH;
-
-      ctx.fillStyle = colour;
-      ctx.fillRect(x, boxY, textWidth + padding * 2, boxH);
-      ctx.fillStyle = '#06101c';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(text, x + padding, boxY + boxH / 2);
-    });
-  }
-
   // -------------------------------------------------------------- event feed
-
-  function labelFor(detection) {
-    if (detection.employee) {
-      return detection.employee + (detection.matchScore != null ? ' · ' + detection.matchScore : '');
-    }
-    if (detection.matchedTemplateId) { return detection.matchedTemplateId; }
-    return (detection.objectType || 'subject') + ' #' + detection.traceIndex;
-  }
 
   function addFeedRow(detection) {
     var li = document.createElement('li');
@@ -254,17 +182,7 @@
 
   function onDetection(detection) {
     addFeedRow(detection);
-
-    if (detection.rect) {
-      active.set(detection.traceIndex, {
-        rect: detection.rect,
-        label: labelFor(detection),
-        identified: Boolean(detection.employee || detection.matchedTemplateId),
-        at: Date.now()
-      });
-    }
     if (detection.eventType === 'SUBJECT_DISAPPEARED') {
-      active.delete(detection.traceIndex);
       addShot(detection.snapshot, detection.employee || 'unknown');
     }
   }
@@ -492,7 +410,6 @@
   el.stopBtn.addEventListener('click', control('api/surveillance/stop'));
 
   startVideo();
-  drawOverlay();
   openStream();
   poll();
   setInterval(poll, POLL_MILLIS);

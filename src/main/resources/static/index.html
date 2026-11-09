@@ -40,13 +40,12 @@
       <h2>Live view</h2>
       <div class="legend">
         <span class="key"><i class="swatch swatch-known"></i>identified</span>
-        <span class="key"><i class="swatch swatch-unknown"></i>tracked</span>
+        <span class="key"><i class="swatch swatch-unknown"></i>unknown</span>
         <span class="muted" id="frameInfo"></span>
       </div>
     </div>
     <div class="stage" id="stage">
-      <img id="video" alt="Live camera feed">
-      <canvas id="overlay"></canvas>
+      <img id="video" alt="Live camera feed with detection boxes">
       <div class="stage-empty" id="stageEmpty">
         <p id="stageEmptyTitle">Source is stopped</p>
         <small id="stageEmptyHint">Press &ldquo;Start source&rdquo; to begin capturing.</small>
