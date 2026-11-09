@@ -42,6 +42,8 @@
     feedState: document.getElementById('feedState'),
     watchList: document.getElementById('watchList'),
     watchState: document.getElementById('watchState'),
+    recognizedPeople: document.getElementById('recognizedPeople'),
+    recognizedState: document.getElementById('recognizedState'),
     gallery: document.getElementById('gallery')
   };
 
@@ -504,9 +506,64 @@
     poll();
   }
 
+  function renderRecognized(people) {
+    var container = el.recognizedPeople;
+    el.recognizedState.textContent = people.length + ' recent ' + (people.length === 1 ? 'person' : 'people');
+    if (!people.length) {
+      container.textContent = '';
+      var empty = document.createElement('p');
+      empty.className = 'empty';
+      empty.textContent = 'Recognized faces will appear here while the video plays.';
+      container.appendChild(empty);
+      return;
+    }
+    // Reuse cards and image URLs so status polling does not reload every face.
+    var existing = new Map();
+    Array.prototype.forEach.call(container.children, function (card) {
+      if (card.dataset.templateId) { existing.set(card.dataset.templateId, card); }
+    });
+    Array.prototype.forEach.call(container.querySelectorAll('.empty'), function (node) { node.remove(); });
+    people.forEach(function (person) {
+      var card = existing.get(person.templateId);
+      if (!card) {
+        card = document.createElement('article');
+        card.className = 'recognized-card';
+        card.dataset.templateId = person.templateId;
+        var image = document.createElement('img');
+        image.className = 'recognized-face';
+        var body = document.createElement('div');
+        ['card-name', 'card-meta', 'card-meta', 'card-meta'].forEach(function (className) {
+          var line = document.createElement('div');
+          line.className = className;
+          body.appendChild(line);
+        });
+        card.appendChild(image);
+        card.appendChild(body);
+      }
+      existing.delete(person.templateId);
+      var img = card.firstChild;
+      var version = String(person.faceVersion);
+      if (img.dataset.version !== version) {
+        img.dataset.version = version;
+        img.src = 'api/live/recognized/' + encodeURIComponent(person.templateId) + '/face.jpg?v=' + version;
+      }
+      img.alt = 'Detected face of ' + person.name;
+      var lines = card.lastChild.children;
+      lines[0].textContent = person.name;
+      lines[1].textContent = person.templateId + (person.score == null ? '' : ' · Match score ' + person.score);
+      lines[2].textContent = 'Last seen ' + clockOf(person.lastSeen);
+      lines[3].textContent = person.source;
+      container.appendChild(card);
+    });
+    existing.forEach(function (card) { card.remove(); });
+  }
+
   function poll() {
     getJson('api/status').then(renderStatus).catch(function () {});
     getJson('api/live/meta').then(renderMeta).catch(function () {});
+    getJson('api/live/recognized').then(renderRecognized).catch(function () {
+      el.recognizedState.textContent = 'reconnecting…';
+    });
   }
 
   function control(path) {

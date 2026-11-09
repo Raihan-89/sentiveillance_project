@@ -21,6 +21,7 @@ import com.raihan.sentiveillance_project.domain.UnknownSubject;
 import com.raihan.sentiveillance_project.domain.UnknownSubjectRepository;
 import com.raihan.sentiveillance_project.live.LiveEventStream;
 import com.raihan.sentiveillance_project.live.LiveFrameService;
+import com.raihan.sentiveillance_project.live.RecognizedPeopleService;
 import jakarta.annotation.PreDestroy;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -76,6 +77,7 @@ public class SurveillanceEngine {
     private final LiveFrameService liveFrames;
     /** Pushes events straight to the dashboard, without waiting for the database. */
     private final LiveEventStream liveEvents;
+    private final RecognizedPeopleService recognizedPeople;
     /** Review queue of people the engine saw but could not name. */
     private final UnknownSubjectRepository unknownSubjects;
 
@@ -157,7 +159,8 @@ public class SurveillanceEngine {
                               DetectionRecorder recorder,
                               LiveFrameService liveFrames,
                               LiveEventStream liveEvents,
-                              UnknownSubjectRepository unknownSubjects) {
+                              UnknownSubjectRepository unknownSubjects,
+                              RecognizedPeopleService recognizedPeople) {
         this.properties = properties;
         this.licenseService = licenseService;
         this.sourceFactory = sourceFactory;
@@ -165,6 +168,7 @@ public class SurveillanceEngine {
         this.liveFrames = liveFrames;
         this.liveEvents = liveEvents;
         this.unknownSubjects = unknownSubjects;
+        this.recognizedPeople = recognizedPeople;
     }
 
     /**
@@ -301,6 +305,7 @@ public class SurveillanceEngine {
             cfg.setName(next.getName());
             cfg.setUrl(null);
             liveFrames.clear();
+            recognizedPeople.clear();
             identityByTrace.clear();
             surveillance.startSource(replacement);
         } catch (RuntimeException failure) {
@@ -328,6 +333,7 @@ public class SurveillanceEngine {
             } finally {
                 disconnectCamera(replacement);
                 liveFrames.clear();
+                recognizedPeople.clear();
             }
             throw failure;
         }
@@ -527,6 +533,7 @@ public class SurveillanceEngine {
     private void unsubscribe() {
         surveillance.removeImageCapturedListener(liveFrames.listener());
         liveFrames.clear();
+        recognizedPeople.clear();
         surveillance.removeRunningChangeListener(onRunningChanged);
         surveillance.removeSubjectAppearedListener(onSubjectAppeared);
         surveillance.removeSubjectTrackListener(onSubjectTrack);
@@ -722,6 +729,15 @@ public class SurveillanceEngine {
                     height = rect.height();
                 }
                 hasFaceDetails = best.getAttributesContainsDetails();
+                String identity = matchedId == null ? identityByTrace.get(details.getTraceIndex()) : matchedId;
+                if (identity != null) {
+                    byte[] face = null;
+                    if (hasFaceDetails && recognizedPeople.needsFace(identity)) {
+                        face = recognizedFace(best);
+                    }
+                    recognizedPeople.seen(identity, watchListNames.getOrDefault(identity, identity),
+                            sourceName, matchScore, face);
+                }
                 if (disappeared && properties.getSnapshots().isEnabled()) {
                     snapshotPath = saveSnapshot(best, details.getTraceIndex(), matchedId, rect,
                             hasFaceDetails);
@@ -871,6 +887,30 @@ public class SurveillanceEngine {
             if (cropped != null && cropped != image) {
                 cropped.dispose();
             }
+        }
+    }
+
+    /** Encode only a face crop, at most once per person every five seconds. */
+    private byte[] recognizedFace(NSurveillanceEventDetails best) {
+        NImage original = null;
+        NImage face = null;
+        try {
+            original = best.getOriginalImage(false);
+            if (original == null) return null;
+            face = cropToFace(original, best, true);
+            if (face == null) return null;
+            var encoded = face.save(NImageFormat.getJPEG());
+            try {
+                return encoded.toByteArray();
+            } finally {
+                encoded.dispose();
+            }
+        } catch (Exception e) {
+            log.debug("Could not capture recognized face: {}", e.toString());
+            return null;
+        } finally {
+            if (face != null) face.dispose();
+            if (original != null) original.dispose();
         }
     }
 

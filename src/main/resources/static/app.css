@@ -324,3 +324,16 @@ label.btn { cursor: pointer; }
 
 .candidate.is-busy { opacity: .55; pointer-events: none; }
 .candidate-error { color: var(--danger); font-size: 11.5px; }
+
+/* Recognized face previews beside the live video. */
+.live-sidebar { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.recognized-list { display: grid; gap: 10px; padding: 14px; max-height: 450px; overflow-y: auto; }
+.recognized-card {
+  display: flex; align-items: center; gap: 12px; padding: 10px;
+  border: 1px solid var(--border); border-left: 3px solid var(--known);
+  border-radius: 8px; background: var(--bg-sunken);
+}
+.recognized-card > div { min-width: 0; overflow-wrap: anywhere; }
+.recognized-card .card-name { color: var(--known); }
+.recognized-card .card-meta { margin-top: 4px; }
+.recognized-face { width: 80px; height: 96px; object-fit: cover; border-radius: 6px; flex: none; }

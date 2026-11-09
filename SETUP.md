@@ -442,6 +442,17 @@ field, and `POST /api/source/video/{name}` to replay an uploaded file. Selection
 to the current process; restarting returns to the configured `sentiveillance.source.*`
 source. To switch to an IP camera, update those properties (see section 4) and restart.
 
+### Recognized faces on the dashboard
+
+The **Recognized people** panel beside the live video displays a face cropped from the
+video, the enrolled name/template ID, the SDK match score, source, and last-seen time.
+It updates while a recognized person is tracked, without waiting for them to leave.
+Cards show the 24 most recently seen people, with one card per enrolled identity.
+Face images refresh at most every five seconds per person and the panel polls every two
+seconds. These previews stay in memory and clear when the source changes or the app
+restarts. A card appears once the detector supplies usable face geometry; the existing
+unidentified queue and persisted snapshots continue to work separately.
+
 ### Turning this into attendance
 
 Not built yet, and deliberately so: the detection layer has to be proven on real camera

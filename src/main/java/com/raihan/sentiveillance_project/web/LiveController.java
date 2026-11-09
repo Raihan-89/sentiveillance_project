@@ -3,6 +3,7 @@ package com.raihan.sentiveillance_project.web;
 import com.raihan.sentiveillance_project.config.SentiveillanceProperties;
 import com.raihan.sentiveillance_project.live.LiveEventStream;
 import com.raihan.sentiveillance_project.live.LiveFrameService;
+import com.raihan.sentiveillance_project.live.RecognizedPeopleService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
@@ -43,14 +44,17 @@ public class LiveController {
 
     private final LiveFrameService frames;
     private final LiveEventStream events;
+    private final RecognizedPeopleService recognizedPeople;
     private final SentiveillanceProperties properties;
 
     public LiveController(LiveFrameService frames,
                           LiveEventStream events,
-                          SentiveillanceProperties properties) {
+                          SentiveillanceProperties properties,
+                          RecognizedPeopleService recognizedPeople) {
         this.frames = frames;
         this.events = events;
         this.properties = properties;
+        this.recognizedPeople = recognizedPeople;
     }
 
     /** Dimensions and counters, so the page can scale detection boxes onto the video. */
@@ -79,6 +83,19 @@ public class LiveController {
                 .cacheControl(CacheControl.noStore())
                 .contentType(MediaType.IMAGE_JPEG)
                 .body(jpeg);
+    }
+
+    @GetMapping("/live/recognized")
+    public ResponseEntity<java.util.List<RecognizedPeopleService.Person>> recognized() {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(recognizedPeople.list());
+    }
+
+    @GetMapping(value = "/live/recognized/{id}/face.jpg", produces = MediaType.IMAGE_JPEG_VALUE)
+    public ResponseEntity<byte[]> recognizedFace(@PathVariable String id) {
+        byte[] face = recognizedPeople.face(id);
+        if (face == null) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+                .contentType(MediaType.IMAGE_JPEG).body(face);
     }
 
     /** The live feed. Ends by itself when the browser closes the connection. */

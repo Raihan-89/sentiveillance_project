@@ -60,13 +60,21 @@
     </div>
   </section>
 
-  <section class="panel">
+  <div class="live-sidebar">
+    <section class="panel">
+      <div class="panel-head"><h2>Recognized people</h2><span class="muted" id="recognizedState">recent matches</span></div>
+      <div class="recognized-list" id="recognizedPeople">
+        <p class="empty">Recognized faces will appear here while the video plays.</p>
+      </div>
+    </section>
+    <section class="panel">
     <div class="panel-head">
       <h2>Event feed</h2>
       <span class="muted" id="feedState">connecting&hellip;</span>
     </div>
     <ul class="feed" id="feed"></ul>
-  </section>
+    </section>
+  </div>
 </main>
 
 <section class="grid grid-bottom">
