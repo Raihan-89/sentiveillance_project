@@ -26,6 +26,8 @@
     watch: document.getElementById('mWatch'),
     nonHuman: document.getElementById('mNonHuman'),
     stage: document.getElementById('stage'),
+    stageEmptyTitle: document.getElementById('stageEmptyTitle'),
+    stageEmptyHint: document.getElementById('stageEmptyHint'),
     video: document.getElementById('video'),
     overlay: document.getElementById('overlay'),
     frameInfo: document.getElementById('frameInfo'),
@@ -250,6 +252,17 @@
     el.runText.textContent = running ? 'capturing' : 'stopped';
     el.startBtn.disabled = running;
     el.stopBtn.disabled = !running;
+
+    // Capture no longer starts on its own, so distinguish "not started yet" from
+    // "started, first frame still on its way".
+    if (running) {
+      el.stageEmptyTitle.textContent = 'Waiting for the first frame';
+      el.stageEmptyHint.textContent = 'Frames are only encoded while this page is open.';
+    } else {
+      el.stageEmptyTitle.textContent = 'Source is stopped';
+      el.stageEmptyHint.textContent = 'Press \u201cStart source\u201d to begin capturing.';
+      el.stage.classList.remove('has-frame');
+    }
   }
 
   function renderMeta(meta) {

@@ -97,8 +97,13 @@ public class SentiveillanceProperties {
          * The detector's vehicle classes are discarded; see {@link People}.
          */
         private boolean detectPeople = true;
-        /** Start the source as soon as the application is up. */
-        private boolean autoStart = true;
+        /**
+         * Capture as soon as the application is up. Default false: the engine is built and
+         * the source attached at startup, then it waits to be triggered from the dashboard
+         * (or POST /api/surveillance/start). The default matches application.properties so a
+         * missing property cannot silently start capturing.
+         */
+        private boolean autoStart = false;
     }
 
     /**
