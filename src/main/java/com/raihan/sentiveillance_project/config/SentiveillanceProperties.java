@@ -187,15 +187,31 @@ public class SentiveillanceProperties {
          */
         private int detectorThreshold = 50;
         /**
-         * How many scales the object detector runs: ONE, TWO, THREE or FOUR. Fewer scales is
-         * markedly faster and is the single biggest lever on detection latency.
+         * How many scales the object detector runs: ONE, TWO, THREE or FOUR.
          *
-         * <p>Measured on this machine (CPU, 2160x3840 source), lag between a frame's SDK
-         * timestamp and its event reaching the writer: the SDK default TWO gave 3.6s rising
-         * to 7.5s over a clip, ONE gave 1.0s rising to 3.5s. Raise it only if small or
-         * distant people are being missed.
+         * <p>This is the single control over <em>how far away</em> a person is still detected,
+         * and it trades directly against latency. Measured on this machine (CPU, 2160x3840,
+         * same clip, cap at 0.33s):
+         * <pre>
+         *   ONE    4 subjects    8 recognised   peak lag  2.4s
+         *   TWO    5 subjects   14-16 recognised   peak lag  5-7s
+         *   THREE  5 subjects   16 recognised   peak lag 10.7s
+         *   FOUR   7-8 subjects  7 recognised   peak lag 17-19s
+         * </pre>
+         * Subject count and recognition count are the reproducible signals; the smallest box
+         * the detector reports is not - it came out 180px, 233px and 233px across three runs
+         * at TWO, because it depends on which frames happened to be sampled. The one place
+         * that figure was stable is FOUR, which reported an 82px-wide person in two
+         * independent runs against 233px everywhere else: that setting really does see about
+         * three times further, at the price of an overlay that is no longer a live view.
+         *
+         * <p>TWO is the chosen balance: it consistently finds one more subject than ONE and
+         * close to double the identifications, while the dashboard stays usable.
+         *
+         * <p>The way out of the trade is fewer pixels per frame, not a different setting -
+         * halve the source resolution and every row above gets roughly twice as fast.
          */
-        private String detectorScaling = "ONE";
+        private String detectorScaling = "TWO";
         /**
          * Minimum seconds between frames handed to the detector - a frame-rate cap, and the
          * difference between an overlay that keeps up and one that drifts further behind the
@@ -204,6 +220,11 @@ public class SentiveillanceProperties {
          * <p>Measured peak lag over the same clip at {@code detectorScaling=ONE}: 0.17s gave
          * ~4900ms, 0.33s gave ~2270ms, 0.50s gave ~810ms. Both enrolled people were still
          * recognised at every setting; what shrinks is the number of samples per visit.
+         *
+         * <p>Note that it also costs range: at {@code detectorScaling=TWO} the smallest person
+         * detected was 180px wide with this at 0.33s, but 233px with it at 0.50s. Fewer frames
+         * examined means a subject is first caught when they are already closer. 0.33s is the
+         * point where latency improves without measurably shortening range.
          */
         private float detectorMinFrameTimeSeconds = 0.33f;
         /** Extract upper/lower clothing colour per tracked person. */
