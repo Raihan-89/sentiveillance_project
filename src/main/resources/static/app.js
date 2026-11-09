@@ -281,17 +281,44 @@
   /* People the engine saw with a face but could not match. Naming one posts it straight
      into the running watch list, so recognition starts on their next appearance - there is
      no photo to supply and no restart. */
+  /* Cards are reconciled by id, never rebuilt.
+     This panel is re-read every 10s because a new candidate only appears when somebody
+     leaves the frame and no live event announces it. Clearing the container and recreating
+     every card made that refresh destroy the <input> you were typing into - the name
+     vanished a few seconds after you started. Existing cards are now left in place, so the
+     text you have typed survives; only genuinely new or departed candidates are touched. */
+  var cardsById = new Map();
+
   function renderCandidates(rows) {
-    el.candidates.textContent = '';
-    if (!rows.length) {
+    var seen = new Set();
+
+    // Newest first in the payload, so inserting each at the top keeps that order.
+    rows.slice().reverse().forEach(function (row) {
+      seen.add(row.id);
+      if (!cardsById.has(row.id)) {
+        var card = candidateCard(row);
+        cardsById.set(row.id, card);
+        el.candidates.insertBefore(card, el.candidates.firstChild);
+      }
+    });
+
+    cardsById.forEach(function (card, id) {
+      if (!seen.has(id)) {
+        card.remove();
+        cardsById.delete(id);
+      }
+    });
+
+    var placeholder = el.candidates.querySelector('.empty');
+    if (!cardsById.size && !placeholder) {
       var empty = document.createElement('p');
       empty.className = 'empty';
       empty.textContent = 'Nobody waiting. Unmatched people with a usable face appear here '
         + 'when they leave the frame.';
       el.candidates.appendChild(empty);
-      return;
+    } else if (cardsById.size && placeholder) {
+      placeholder.remove();
     }
-    rows.forEach(function (row) { el.candidates.appendChild(candidateCard(row)); });
   }
 
   function candidateCard(row) {
@@ -360,6 +387,7 @@
         .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
         .then(function (res) {
           if (!res.ok) { return fail(res.body.error || 'Could not enrol.'); }
+          cardsById.delete(row.id);
           card.remove();
           refreshPanels();
         })
@@ -371,7 +399,11 @@
     skip.addEventListener('click', function () {
       card.classList.add('is-busy');
       fetch('api/unknown/' + row.id, { method: 'DELETE' })
-        .then(function () { card.remove(); refreshPanels(); })
+        .then(function () {
+          cardsById.delete(row.id);
+          card.remove();
+          refreshPanels();
+        })
         .catch(function () { fail('Could not dismiss.'); });
     });
 
