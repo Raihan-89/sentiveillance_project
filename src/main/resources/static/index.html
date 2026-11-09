@@ -42,7 +42,14 @@
         <span class="key"><i class="swatch swatch-known"></i>identified</span>
         <span class="key"><i class="swatch swatch-unknown"></i>unknown</span>
         <span class="muted" id="frameInfo"></span>
+        <label class="btn btn-ghost btn-sm" for="videoFile" title="Pick a video from this computer">Choose video
+          <input type="file" id="videoFile" accept="video/*,.mp4,.avi,.mkv,.mov,.m4v,.mpg,.mpeg,.wmv,.flv,.webm,.ts" hidden>
+        </label>
+        <select class="picker" id="videoPicker" aria-label="Previously uploaded videos" title="Videos already uploaded"></select>
       </div>
+    </div>
+    <div class="source-bar">
+      <span id="sourceStatus" class="muted" role="status" aria-live="polite">&nbsp;</span>
     </div>
     <div class="stage" id="stage">
       <img id="video" alt="Live camera feed with detection boxes">

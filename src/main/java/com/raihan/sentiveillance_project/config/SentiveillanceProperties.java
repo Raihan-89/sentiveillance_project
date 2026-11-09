@@ -119,6 +119,12 @@ public class SentiveillanceProperties {
          * missing property cannot silently start capturing.
          */
         private boolean autoStart = false;
+        /**
+         * Where videos chosen from the dashboard are kept. They are written here and handed to
+         * the SDK by path, so the file has to outlive the upload request - a temp file would be
+         * gone before the engine was finished with it.
+         */
+        private String uploadsDirectory = "var/uploads";
     }
 
     /**

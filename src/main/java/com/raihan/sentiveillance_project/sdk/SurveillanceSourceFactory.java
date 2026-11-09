@@ -48,7 +48,10 @@ public class SurveillanceSourceFactory {
     }
 
     public NSurveillanceSource create(NSurveillance surveillance) {
-        SentiveillanceProperties.Source cfg = properties.getSource();
+        return create(surveillance, properties.getSource());
+    }
+
+    NSurveillanceSource create(NSurveillance surveillance, SentiveillanceProperties.Source cfg) {
         EnumSet<NSurveillanceModalityType> modalities = licenseService.resolveModalities(cfg.isDetectPeople());
 
         NCamera camera = connect(surveillance.getDeviceManager(), cfg);

@@ -253,6 +253,89 @@ public class SurveillanceEngine {
         watchListNames.put(templateId, fullName);
     }
 
+    /**
+     * Swaps the running source for another video file and starts capturing it.
+     *
+     * <p>Connect the replacement before stopping capture, and restore the previous source if
+     * starting it fails. Listeners live on the engine and do not need resubscribing. The old
+     * camera is disconnected only once the replacement has started successfully.
+     *
+     * <p>The configured source is updated in place rather than kept separately, so everything
+     * reading it downstream - the name stored on each detection row, {@code /api/live/meta} -
+     * describes the video actually playing.
+     *
+     * @param file an existing, readable video file
+     * @return the name now reported for the source
+     */
+    public synchronized String useVideoFile(Path file) {
+        if (surveillance == null) {
+            throw new IllegalStateException("Surveillance engine is not started");
+        }
+        if (!Files.isRegularFile(file) || !Files.isReadable(file)) {
+            throw new IllegalArgumentException("Video file not readable: " + file);
+        }
+
+        SentiveillanceProperties.Source cfg = properties.getSource();
+        SentiveillanceProperties.Source next = new SentiveillanceProperties.Source();
+        next.setType(SentiveillanceProperties.Source.Type.VIDEO_FILE);
+        next.setFile(file.toString());
+        next.setName(file.getFileName().toString());
+        next.setFlags(cfg.getFlags());
+        next.setDetectPeople(cfg.isDetectPeople());
+
+        // Validate/connect before touching the current source or its configuration.
+        NSurveillanceSource replacement = sourceFactory.create(surveillance, next);
+        NSurveillanceSource previous = source;
+        boolean wasRunning = running;
+        var oldType = cfg.getType();
+        String oldFile = cfg.getFile(), oldName = cfg.getName(), oldUrl = cfg.getUrl();
+        try {
+            if (previous != null) {
+                surveillance.stopSource(previous);
+                surveillance.getSources().remove(previous);
+            }
+            surveillance.getSources().add(replacement);
+            source = replacement;
+            cfg.setType(next.getType());
+            cfg.setFile(next.getFile());
+            cfg.setName(next.getName());
+            cfg.setUrl(null);
+            liveFrames.clear();
+            identityByTrace.clear();
+            surveillance.startSource(replacement);
+        } catch (RuntimeException failure) {
+            // A rejected/undecodable file must not strand the existing source.
+            cfg.setType(oldType);
+            cfg.setFile(oldFile);
+            cfg.setName(oldName);
+            cfg.setUrl(oldUrl);
+            source = previous;
+            try {
+                surveillance.stopSource(replacement);
+            } catch (RuntimeException cleanup) {
+                failure.addSuppressed(cleanup);
+            }
+            try {
+                surveillance.getSources().remove(replacement);
+                if (previous != null) {
+                    if (!surveillance.getSources().contains(previous)) {
+                        surveillance.getSources().add(previous);
+                    }
+                    if (wasRunning) surveillance.startSource(previous);
+                }
+            } catch (RuntimeException rollback) {
+                failure.addSuppressed(rollback);
+            } finally {
+                disconnectCamera(replacement);
+                liveFrames.clear();
+            }
+            throw failure;
+        }
+        if (previous != null) disconnectCamera(previous);
+        log.info("Source switched to '{}'", cfg.getName());
+        return cfg.getName();
+    }
+
     /** Starts the configured source if it is not already capturing. */
     public synchronized void startSource() {
         requireStarted();

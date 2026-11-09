@@ -425,8 +425,22 @@ To re-extract templates for people already enrolled (after changing
 
 ### Switch between the video file and the camera
 
-Only `sentiveillance.source.*` changes — see section 4. Restart to apply; there is no
-hot-reload (and do not add DevTools to get one, see the note in `application.properties`).
+Use **Choose video** on the dashboard to import a video from your computer. Once the
+upload finishes, the engine switches to it and starts capture. The dropdown replays
+previously uploaded videos without another upload. Existing watch-list templates and
+settings are retained; a failed switch attempts to restore the previous source.
+
+Files are retained in `sentiveillance.source.uploads-directory` (default `var/uploads`)
+with unique filenames, so importing another file with the same name does not overwrite
+an active video. Supported extensions: mp4, avi, mkv, mov, m4v, mpg, mpeg, wmv, flv,
+webm, ts. Actual decoding depends on the SDK Media plugin and installed codecs.
+Uploads default to a 2 GB multipart limit; adjust `spring.servlet.multipart.max-file-size`
+and `spring.servlet.multipart.max-request-size` together if needed.
+
+The API is `GET /api/source/videos`, multipart `POST /api/source/video` with a `file`
+field, and `POST /api/source/video/{name}` to replay an uploaded file. Selections apply
+to the current process; restarting returns to the configured `sentiveillance.source.*`
+source. To switch to an IP camera, update those properties (see section 4) and restart.
 
 ### Turning this into attendance
 

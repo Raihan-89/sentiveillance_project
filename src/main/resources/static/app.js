@@ -35,6 +35,9 @@
     stageEmptyHint: document.getElementById('stageEmptyHint'),
     video: document.getElementById('video'),
     frameInfo: document.getElementById('frameInfo'),
+    videoFile: document.getElementById('videoFile'),
+    videoPicker: document.getElementById('videoPicker'),
+    sourceStatus: document.getElementById('sourceStatus'),
     feed: document.getElementById('feed'),
     feedState: document.getElementById('feedState'),
     watchList: document.getElementById('watchList'),
@@ -115,6 +118,84 @@
       })
       .catch(function () { /* transient - the next tick retries */ })
       .then(function () { framePending = false; });
+  }
+
+  /* Choosing the video from the browser rather than editing a property and restarting.
+     The file is uploaded because the SDK reads a path, not a browser blob: it decodes the
+     video natively and keeps reading for as long as the source is attached. */
+  function note(message, kind) {
+    el.sourceStatus.textContent = message;
+    el.sourceStatus.className = kind === 'busy' ? 'is-busy-text'
+      : kind === 'error' ? 'is-error' : 'muted';
+  }
+
+  var sourceBusy = false;
+  var sourceRunning = false;
+
+  function sourceBusyState(busy) {
+    sourceBusy = busy;
+    el.videoFile.disabled = busy;
+    el.videoPicker.disabled = busy;
+    el.startBtn.disabled = busy || sourceRunning;
+    el.stopBtn.disabled = busy || !sourceRunning;
+  }
+
+  function postJson(url, options) {
+    return fetch(url, options)
+      .then(function (r) {
+        return r.text().then(function (text) {
+          var body;
+          try { body = JSON.parse(text); } catch (e) {
+            body = { error: r.status === 413 ? 'Video exceeds the upload size limit.'
+              : 'Request failed (HTTP ' + r.status + ').' };
+          }
+          return { ok: r.ok, body: body };
+        });
+      });
+  }
+
+  function afterSwitch(res) {
+    if (!res.ok) {
+      note(res.body.error || 'Could not switch video.', 'error');
+      loadVideoList();
+      poll();
+      return;
+    }
+    note((res.body.running ? 'Now playing ' : 'Selected ') + res.body.current, null);
+    el.stage.classList.remove('has-frame');
+    loadVideoList();
+    poll();
+  }
+
+  function uploadVideo(file) {
+    if (sourceBusy) { return; }
+    if (!file.size) { note('Choose a non-empty video file.', 'error'); return; }
+    sourceBusyState(true);
+    var form = new FormData();
+    form.append('file', file);
+    note('Uploading ' + file.name + ' (' + Math.round(file.size / 1048576) + ' MB)...', 'busy');
+    postJson('api/source/video', { method: 'POST', body: form })
+      .then(afterSwitch)
+      .catch(function () { note('Upload failed. Check the connection and try again.', 'error'); })
+      .then(function () { sourceBusyState(false); });
+  }
+
+  function loadVideoList() {
+    getJson('api/source/videos').then(function (data) {
+      el.videoPicker.textContent = '';
+      if (!data.videos.length) { return; }
+      var head = document.createElement('option');
+      head.value = '';
+      head.textContent = 'Switch to...';
+      el.videoPicker.appendChild(head);
+      data.videos.forEach(function (v) {
+        var opt = document.createElement('option');
+        opt.value = v.name;
+        opt.textContent = v.name + ' (' + Math.round(v.bytes / 1048576) + ' MB)'
+          + (v.name === data.current ? ' - playing' : '');
+        el.videoPicker.appendChild(opt);
+      });
+    }).catch(function () {});
   }
 
   function markFrameArrived() {
@@ -218,10 +299,11 @@
       : lag < 1000 ? lag + 'ms' : (lag / 1000).toFixed(1) + 's';
 
     var running = Boolean(status.running);
+    sourceRunning = running;
     el.runPill.className = 'pill ' + (running ? 'is-running' : 'is-stopped');
     el.runText.textContent = running ? 'capturing' : 'stopped';
-    el.startBtn.disabled = running;
-    el.stopBtn.disabled = !running;
+    el.startBtn.disabled = sourceBusy || running;
+    el.stopBtn.disabled = sourceBusy || !running;
 
     // Capture no longer starts on its own, so distinguish "not started yet" from
     // "started, first frame still on its way".
@@ -429,7 +511,8 @@
 
   function control(path) {
     return function () {
-      el.startBtn.disabled = el.stopBtn.disabled = true;
+      el.startBtn.disabled = true;
+      el.stopBtn.disabled = true;
       fetch(path, { method: 'POST' })
         .then(poll)
         .catch(poll);
@@ -437,6 +520,23 @@
   }
 
   // -------------------------------------------------------------------- boot
+
+  el.videoFile.addEventListener('change', function () {
+    if (this.files && this.files[0]) {
+      uploadVideo(this.files[0]);
+      this.value = '';            // so re-picking the same file fires change again
+    }
+  });
+  el.videoPicker.addEventListener('change', function () {
+    var name = this.value;
+    if (!name || sourceBusy) { return; }
+    sourceBusyState(true);
+    note('Switching to ' + name + '...', 'busy');
+    postJson('api/source/video/' + encodeURIComponent(name), { method: 'POST' })
+      .then(afterSwitch)
+      .catch(function () { note('Could not switch video.', 'error'); })
+      .then(function () { sourceBusyState(false); });
+  });
 
   el.startBtn.addEventListener('click', control('api/surveillance/start'));
   el.stopBtn.addEventListener('click', control('api/surveillance/stop'));
@@ -447,6 +547,7 @@
   setInterval(poll, POLL_MILLIS);
 
   refreshPanels();
+  loadVideoList();
   /* The queue is re-read on a slow timer as well: new candidates only appear when somebody
      leaves the frame, which no live event announces. */
   setInterval(function () {
