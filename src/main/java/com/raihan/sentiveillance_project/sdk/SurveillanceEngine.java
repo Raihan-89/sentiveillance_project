@@ -89,6 +89,8 @@ public class SurveillanceEngine {
     private final AtomicLong eventsSeen = new AtomicLong();
     private final AtomicLong subjectsSeen = new AtomicLong();
     private final AtomicLong identifiedSeen = new AtomicLong();
+    /** Vehicle-class detections discarded by {@link #isHumanSubject}. */
+    private final AtomicLong nonHumanIgnored = new AtomicLong();
 
     // Listeners are kept as fields so the exact same instances can be unsubscribed later.
     private final NSurveillanceListener onSubjectAppeared = e -> handle(e, "SUBJECT_APPEARED");
@@ -218,21 +220,23 @@ public class SurveillanceEngine {
             surveillance = null;
             source = null;
             running = false;
-            log.info("Totals - events: {}, subjects: {}, identified: {}",
-                    eventsSeen.get(), subjectsSeen.get(), identifiedSeen.get());
+            log.info("Totals - events: {}, subjects: {}, identified: {}, non-human discarded: {}",
+                    eventsSeen.get(), subjectsSeen.get(), identifiedSeen.get(), nonHumanIgnored.get());
         }
     }
 
     public Stats stats() {
         return new Stats(running, eventsSeen.get(), subjectsSeen.get(), identifiedSeen.get(),
-                surveillance == null ? 0 : surveillance.getTemplateIds().length);
+                surveillance == null ? 0 : surveillance.getTemplateIds().length,
+                nonHumanIgnored.get());
     }
 
     /**
      * @author Md. Raihan Shikder (Raihan-89)
      * @date 8 November, 2026
      */
-    public record Stats(boolean running, long events, long subjects, long identified, int watchListSize) {
+    public record Stats(boolean running, long events, long subjects, long identified, int watchListSize,
+                        long nonHumanIgnored) {
     }
 
     // ------------------------------------------------------------------
@@ -253,6 +257,21 @@ public class SurveillanceEngine {
         // The recognition decision threshold, in SDK score units.
         s.setMatchingThreshold(faces.getMatchingThreshold());
         s.setMatchingMaximalResultCount(faces.getMatchingMaximalResultCount());
+
+        // ---- people, and keeping vehicles out ----------------------------------------
+        SentiveillanceProperties.People people = properties.getPeople();
+        // The body detector is shared between people and vehicles, so its threshold is the
+        // person-detection threshold here.
+        s.setVehicleHumanDetectorThreshold(people.getDetectorThreshold());
+        // Never compute make/model/colour for a vehicle: the work is pure waste in a
+        // people-only pipeline, and nothing downstream reads NVehicleDetails.
+        s.setDetectVehicleDetails(false);
+        // Person attributes we do want.
+        s.setDetectClothingDetails(people.isDetectClothingDetails());
+        s.setDetectFaceAndHeadCoverings(people.isDetectFaceAndHeadCoverings());
+        s.setEstimateAgeGroup(people.isEstimateAgeGroup());
+        // Every setLicensePlate* setter is deliberately untouched - the plate reader is kept
+        // out by never putting LICENSE_PLATE_RECOGNITION in the source's modality set.
         // Deliberately NOT calling setFacesWithDetailsOnly(): the Java binding still has the
         // method, but SentiVeillance 10.1's libNSurveillance.so does not expose the
         // 'Faces.WithDetailsOnly' property behind it, so the call throws
@@ -266,6 +285,12 @@ public class SurveillanceEngine {
                 faces.getQualityThreshold(),
                 faces.getMinimalInterOcularDistance(),
                 faces.getTemplateSize());
+        log.info("People settings  - humansOnly={}, bodyThreshold={}, clothing={}, headCoverings={}, ageGroup={}",
+                people.isHumansOnly(),
+                people.getDetectorThreshold(),
+                people.isDetectClothingDetails(),
+                people.isDetectFaceAndHeadCoverings(),
+                people.isEstimateAgeGroup());
     }
 
     private void loadWatchList(Collection<Employee> watchList) {
@@ -352,6 +377,13 @@ public class SurveillanceEngine {
                 details.dispose();
             }
 
+            if (!isHumanSubject(snapshot)) {
+                // A vehicle the shared body detector happened to classify. Dropped here so it
+                // never reaches the counters, the database or the dashboard.
+                nonHumanIgnored.incrementAndGet();
+                continue;
+            }
+
             eventsSeen.incrementAndGet();
             if (disappeared) {
                 subjectsSeen.incrementAndGet();
@@ -368,6 +400,29 @@ public class SurveillanceEngine {
                 }
             });
         }
+    }
+
+    /** Object types the shared body detector emits that are not a person. */
+    private static final java.util.Set<String> NON_HUMAN_OBJECT_TYPES =
+            java.util.Set.of("CAR", "BUS", "TRUCK", "BIKE");
+
+    /**
+     * Whether this event describes a person.
+     *
+     * <p>The SDK's body detector cannot be restricted to people: it classifies every box it
+     * finds as PERSON, CAR, BUS, TRUCK or BIKE, and the modality that enables it is literally
+     * called {@code VEHICLES_AND_HUMANS}. Filtering here is therefore the only way to get a
+     * people-only pipeline while still tracking somebody whose face is turned away.
+     *
+     * <p>A null object type is kept: face events carry no object type at all, and an error
+     * event has to be reported whatever it was about.
+     */
+    private boolean isHumanSubject(SubjectEventSnapshot snapshot) {
+        if (!properties.getPeople().isHumansOnly()) {
+            return true;
+        }
+        String objectType = snapshot.objectType();
+        return objectType == null || !NON_HUMAN_OBJECT_TYPES.contains(objectType);
     }
 
     /**

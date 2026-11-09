@@ -21,6 +21,7 @@ public class SentiveillanceProperties {
     private Sdk sdk = new Sdk();
     private Source source = new Source();
     private Faces faces = new Faces();
+    private People people = new People();
     private Enrollment enrollment = new Enrollment();
     private Snapshots snapshots = new Snapshots();
 
@@ -91,7 +92,10 @@ public class SentiveillanceProperties {
          * source dialog; on Linux they are rarely needed.
          */
         private String flags;
-        /** Also run the vehicle/human detector, so people are tracked even with no visible face. */
+        /**
+         * Run the body detector as well, so a person is tracked even with no visible face.
+         * The detector's vehicle classes are discarded; see {@link People}.
+         */
         private boolean detectPeople = true;
         /** Start the source as soon as the application is up. */
         private boolean autoStart = true;
@@ -121,6 +125,42 @@ public class SentiveillanceProperties {
         private int minimalInterOcularDistance = 24;
         /** Template size used for the surveillance engine: COMPACT, SMALL, MEDIUM or LARGE. */
         private String templateSize = "LARGE";
+    }
+
+    /**
+     * Person-related detection, and the switches that keep vehicles out of the pipeline.
+     *
+     * <p>The SDK's body detector is one model that emits PERSON, CAR, BUS, TRUCK and BIKE -
+     * it cannot be told to look for people only. So "humans only" is enforced in two places:
+     * the vehicle attribute extractors below are left off, and every event whose object type
+     * is not PERSON is dropped before it reaches the database or the dashboard.
+     *
+     * @author Md. Raihan Shikder (Raihan-89)
+     * @date 9 November, 2026
+     */
+    @Getter
+    @Setter
+    public static class People {
+        /**
+         * Discard detections classified as CAR, BUS, TRUCK or BIKE. Leave true - it is what
+         * makes this a people-only pipeline. Setting it to false records whatever the body
+         * detector reports, vehicles included.
+         */
+        private boolean humansOnly = true;
+        /**
+         * Confidence the body detector needs before reporting a box (SDK units).
+         * Raise it if furniture or shadows are being tracked as people.
+         */
+        private int detectorThreshold = 50;
+        /** Extract upper/lower clothing colour per tracked person. */
+        private boolean detectClothingDetails = true;
+        /** Classify a face/head covering - mask, hat, hood. */
+        private boolean detectFaceAndHeadCoverings = true;
+        /**
+         * Estimate an age group (child / teenager / adult / senior). Off by default: it
+         * loads another model and costs CPU per track.
+         */
+        private boolean estimateAgeGroup = false;
     }
 
     /**

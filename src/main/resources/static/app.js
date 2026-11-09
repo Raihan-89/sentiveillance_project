@@ -24,6 +24,7 @@
     identified: document.getElementById('mIdentified'),
     stored: document.getElementById('mStored'),
     watch: document.getElementById('mWatch'),
+    nonHuman: document.getElementById('mNonHuman'),
     stage: document.getElementById('stage'),
     video: document.getElementById('video'),
     overlay: document.getElementById('overlay'),
@@ -242,6 +243,7 @@
     el.identified.textContent = status.identified;
     el.stored.textContent = status.storedEvents;
     el.watch.textContent = status.watchListSize;
+    el.nonHuman.textContent = status.nonHumanIgnored;
 
     var running = Boolean(status.running);
     el.runPill.className = 'pill ' + (running ? 'is-running' : 'is-stopped');

@@ -30,21 +30,34 @@ import java.util.EnumSet;
 @Service
 public class LicenseService {
 
-    /** Face recognition and tracking - the component this project needs. */
+    /** Face detection, tracking and recognition. */
     private static final String COMPONENT_FACES = "SentiVeillance";
-    /** Vehicle & human detector - lets us track people with no visible face. */
-    private static final String COMPONENT_VEHICLE_HUMAN = "SentiVeillanceVH";
-    /** Automatic licence plate recognition - not used here, obtained only for completeness. */
-    private static final String COMPONENT_ALPR = "SentiVeillanceALPR";
+    /**
+     * The body detector, licensed by Neurotechnology as "VH" (vehicles & humans).
+     *
+     * <p>There is no humans-only component to buy and no humans-only modality to enable: this
+     * is one neural detector that classifies every box it finds as PERSON, CAR, BUS, TRUCK or
+     * BIKE. It is needed here because it is the only thing that tracks a person whose face is
+     * turned away from the camera. The vehicle classes it also emits are discarded - see
+     * {@code SurveillanceEngine.isHuman} - and vehicle attribute extraction is switched off.
+     */
+    private static final String COMPONENT_BODIES = "SentiVeillanceVH";
 
-    private static final String[] COMPONENTS = {COMPONENT_FACES, COMPONENT_VEHICLE_HUMAN, COMPONENT_ALPR};
+    /**
+     * Exactly the two components this project uses.
+     *
+     * <p>{@code SentiVeillanceALPR} (licence-plate recognition) is deliberately absent: it is
+     * not obtained, not activated and its modality is never enabled, so no plate is ever read.
+     */
+    private static final String[] COMPONENTS = {COMPONENT_FACES, COMPONENT_BODIES};
 
     private final SentiveillanceProperties properties;
 
     @Getter
     private boolean facesAvailable;
+    /** Whether the body detector is licensed - people without a visible face. */
     @Getter
-    private boolean vehicleHumanAvailable;
+    private boolean bodiesAvailable;
     @Getter
     private boolean obtained;
 
@@ -110,23 +123,32 @@ public class LicenseService {
         // used for the *activation check* differ from the ones used to obtain - that is how
         // the SDK's own sample does it.
         facesAvailable = isActivated("SentiVeillance");
-        vehicleHumanAvailable = isActivated("Sentiveillance.VH");
-        log.info("Detectors available - faces: {}, vehicles&humans: {}", facesAvailable, vehicleHumanAvailable);
+        bodiesAvailable = isActivated("Sentiveillance.VH");
+        log.info("Detectors available - faces: {}, bodies: {} (licence-plate recognition is never requested)",
+                facesAvailable, bodiesAvailable);
 
         obtained = true;
     }
 
     /**
-     * The modality set to put on the source. FACES drives recognition; VEHICLES_AND_HUMANS
-     * adds body detection so a person is still tracked when the face is turned away - useful
-     * for a ceiling camera.
+     * The modality set to put on the source - people and faces only.
+     *
+     * <p>{@code FACES} drives detection, tracking and watch-list recognition.
+     * {@code VEHICLES_AND_HUMANS} is the body detector, so somebody is still tracked while
+     * their face is turned away; its vehicle classes are filtered out of every event.
+     *
+     * <p>{@link NSurveillanceModalityType#LICENSE_PLATE_RECOGNITION} is never added. That is
+     * what keeps the plate reader out of the pipeline entirely - the modality set on the
+     * source is what decides which detectors the engine actually runs.
+     *
+     * @param wantBodyDetection whether to track people with no visible face
      */
-    public EnumSet<NSurveillanceModalityType> resolveModalities(boolean wantPeopleDetection) {
+    public EnumSet<NSurveillanceModalityType> resolveModalities(boolean wantBodyDetection) {
         EnumSet<NSurveillanceModalityType> modalities = EnumSet.noneOf(NSurveillanceModalityType.class);
         if (facesAvailable) {
             modalities.add(NSurveillanceModalityType.FACES);
         }
-        if (wantPeopleDetection && vehicleHumanAvailable) {
+        if (wantBodyDetection && bodiesAvailable) {
             modalities.add(NSurveillanceModalityType.VEHICLES_AND_HUMANS);
         }
         if (modalities.isEmpty()) {
