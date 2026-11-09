@@ -94,10 +94,24 @@ public class SentiveillanceProperties {
          */
         private String flags;
         /**
-         * Run the body detector as well, so a person is tracked even with no visible face.
-         * The detector's vehicle classes are discarded; see {@link People}.
+         * Also run the body detector, adding the {@code VEHICLES_AND_HUMANS} modality.
+         *
+         * <p>Off by default, so the engine runs on faces alone. With it on, the rectangle the
+         * engine reports for a subject is their whole body, which is what put a tall box around
+         * each person instead of their face, and the body detector is also the expensive half of
+         * the pipeline. Measured on the same clip:
+         * <pre>
+         *   faces + bodies   boxes ~1020x3624 (aspect 0.28)   detector lag ~4700 ms
+         *   faces only       boxes ~170x233   (aspect 0.75)   detector lag ~214 ms
+         * </pre>
+         *
+         * <p>What is given up: somebody whose face is turned away is not tracked at all, and
+         * range shortens, because a face covers far fewer pixels than a body - at distance a
+         * person may be plainly visible as a body while their face is too small to detect.
+         * Turn this on if tracking people regardless of head position matters more than either
+         * latency or face-shaped boxes.
          */
-        private boolean detectPeople = true;
+        private boolean detectPeople = false;
         /**
          * Capture as soon as the application is up. Default false: the engine is built and
          * the source attached at startup, then it waits to be triggered from the dashboard
