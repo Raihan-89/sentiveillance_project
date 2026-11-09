@@ -43,6 +43,7 @@ public class SurveillanceController {
                 "identified", stats.identified(),
                 "watchListSize", stats.watchListSize(),
                 "nonHumanIgnored", stats.nonHumanIgnored(),
+                "detectionLagMillis", stats.detectionLagMillis(),
                 "storedEvents", detectionEvents.count(),
                 "employees", employees.count());
     }

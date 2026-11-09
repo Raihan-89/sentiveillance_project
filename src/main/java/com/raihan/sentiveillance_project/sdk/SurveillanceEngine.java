@@ -17,6 +17,7 @@ import com.raihan.sentiveillance_project.config.SentiveillanceProperties;
 import com.raihan.sentiveillance_project.detection.DetectionRecorder;
 import com.raihan.sentiveillance_project.detection.SubjectEventSnapshot;
 import com.raihan.sentiveillance_project.domain.Employee;
+import com.raihan.sentiveillance_project.live.LiveEventStream;
 import com.raihan.sentiveillance_project.live.LiveFrameService;
 import jakarta.annotation.PreDestroy;
 import lombok.Getter;
@@ -71,6 +72,8 @@ public class SurveillanceEngine {
     private final DetectionRecorder recorder;
     /** Feeds the browser dashboard; encodes nothing unless a page is actually watching. */
     private final LiveFrameService liveFrames;
+    /** Pushes events straight to the dashboard, without waiting for the database. */
+    private final LiveEventStream liveEvents;
 
     /**
      * Single-threaded so database rows land in event order; separate from the SDK's threads
@@ -78,6 +81,13 @@ public class SurveillanceEngine {
      */
     private final ExecutorService eventExecutor =
             Executors.newSingleThreadExecutor(r -> new Thread(r, "detection-writer"));
+    /**
+     * Snapshot JPEGs are written here, not on the SDK callback thread. Measured: writing one
+     * 390 KB frame inline cost 64-71 ms of the capture thread per disappeared subject, which
+     * is back-pressure straight into the video pipeline.
+     */
+    private final ExecutorService snapshotExecutor =
+            Executors.newSingleThreadExecutor(r -> new Thread(r, "snapshot-writer"));
 
     private NSurveillance surveillance;
     private NSurveillanceSource source;
@@ -91,6 +101,17 @@ public class SurveillanceEngine {
     private final AtomicLong identifiedSeen = new AtomicLong();
     /** Vehicle-class detections discarded by {@link #isHumanSubject}. */
     private final AtomicLong nonHumanIgnored = new AtomicLong();
+    /**
+     * How far behind the camera the detector currently is: milliseconds between a frame's SDK
+     * timestamp and the moment its event reached us. Exposed on /api/status because this, not
+     * the HTTP transport, is what decides whether the overlay looks live.
+     */
+    private final AtomicLong detectionLagMillis = new AtomicLong();
+    /**
+     * templateId -> employee name, built from the watch list at start. Lets the live push name
+     * the person without a database round trip on the callback thread.
+     */
+    private final java.util.Map<String, String> watchListNames = new java.util.concurrent.ConcurrentHashMap<>();
 
     // Listeners are kept as fields so the exact same instances can be unsubscribed later.
     private final NSurveillanceListener onSubjectAppeared = e -> handle(e, "SUBJECT_APPEARED");
@@ -105,12 +126,14 @@ public class SurveillanceEngine {
                               LicenseService licenseService,
                               SurveillanceSourceFactory sourceFactory,
                               DetectionRecorder recorder,
-                              LiveFrameService liveFrames) {
+                              LiveFrameService liveFrames,
+                              LiveEventStream liveEvents) {
         this.properties = properties;
         this.licenseService = licenseService;
         this.sourceFactory = sourceFactory;
         this.recorder = recorder;
         this.liveFrames = liveFrames;
+        this.liveEvents = liveEvents;
     }
 
     /**
@@ -211,8 +234,10 @@ public class SurveillanceEngine {
             log.warn("Error while stopping surveillance: {}", e.toString());
         } finally {
             eventExecutor.shutdown();
+            snapshotExecutor.shutdown();
             try {
                 eventExecutor.awaitTermination(10, TimeUnit.SECONDS);
+                snapshotExecutor.awaitTermination(10, TimeUnit.SECONDS);
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
             }
@@ -228,7 +253,7 @@ public class SurveillanceEngine {
     public Stats stats() {
         return new Stats(running, eventsSeen.get(), subjectsSeen.get(), identifiedSeen.get(),
                 surveillance == null ? 0 : surveillance.getTemplateIds().length,
-                nonHumanIgnored.get());
+                nonHumanIgnored.get(), detectionLagMillis.get());
     }
 
     /**
@@ -236,7 +261,7 @@ public class SurveillanceEngine {
      * @date 8 November, 2026
      */
     public record Stats(boolean running, long events, long subjects, long identified, int watchListSize,
-                        long nonHumanIgnored) {
+                        long nonHumanIgnored, long detectionLagMillis) {
     }
 
     // ------------------------------------------------------------------
@@ -263,10 +288,14 @@ public class SurveillanceEngine {
         // The body detector is shared between people and vehicles, so its threshold is the
         // person-detection threshold here.
         s.setVehicleHumanDetectorThreshold(people.getDetectorThreshold());
+        // The dominant control over detection latency - see People.detectorScaling.
+        s.setDetectorScaling(com.neurotec.surveillance.NDetectorScaleCount
+                .valueOf(people.getDetectorScaling()));
         // Never compute make/model/colour for a vehicle: the work is pure waste in a
         // people-only pipeline, and nothing downstream reads NVehicleDetails.
         s.setDetectVehicleDetails(false);
         // Person attributes we do want.
+        applyDetectorFrameRateCap(s, people);
         s.setDetectClothingDetails(people.isDetectClothingDetails());
         s.setDetectFaceAndHeadCoverings(people.isDetectFaceAndHeadCoverings());
         s.setEstimateAgeGroup(people.isEstimateAgeGroup());
@@ -285,12 +314,58 @@ public class SurveillanceEngine {
                 faces.getQualityThreshold(),
                 faces.getMinimalInterOcularDistance(),
                 faces.getTemplateSize());
-        log.info("People settings  - humansOnly={}, bodyThreshold={}, clothing={}, headCoverings={}, ageGroup={}",
+        log.info("People settings  - humansOnly={}, detectorScaling={}, bodyThreshold={}, clothing={}, "
+                        + "headCoverings={}, ageGroup={}",
                 people.isHumansOnly(),
+                people.getDetectorScaling(),
                 people.getDetectorThreshold(),
                 people.isDetectClothingDetails(),
                 people.isDetectFaceAndHeadCoverings(),
                 people.isEstimateAgeGroup());
+    }
+
+    /**
+     * Caps how often the detector is fed a frame, which is what keeps the overlay live.
+     *
+     * <h2>The problem this solves</h2>
+     * Measured on this machine: the detector processed a 7.5s, 2160x3840, 30 fps clip in
+     * 13.2s of wall time - about 0.57x real time. A source that produces frames faster than
+     * the detector consumes them builds a backlog, so the gap between what the camera sees
+     * and what the overlay shows does not settle, it grows for as long as the source runs.
+     * No amount of transport tuning fixes that; the detector has to be given less work.
+     *
+     * <h2>Measured effect</h2>
+     * Peak {@code detectionLagMillis} over the same clip, at {@code detectorScaling=ONE}:
+     * <pre>
+     *   0.17s (the SDK default)  ~4900 ms   ~117 events, both people recognised
+     *   0.33s                    ~2270 ms    ~71 events, both people recognised
+     *   0.50s                     ~810 ms    ~45 events, both people recognised
+     * </pre>
+     * The cost is temporal resolution - fewer samples per visit, so a fast-moving person is
+     * tracked more coarsely - not accuracy: identification still worked at every setting.
+     *
+     * <h2>Why setProperty</h2>
+     * {@code ObjectTracker.BatcherMinFrameTime} has no setter in the Java binding, so it is
+     * set through the generic property API. It is present in SentiVeillance 10.1 (read back
+     * as a Float, default 0.17, in seconds) but it is not part of the documented surface, so
+     * a failure here is logged and ignored rather than being allowed to stop startup - the
+     * same lesson as {@code Faces.WithDetailsOnly}, which the binding exposes and the native
+     * library does not.
+     */
+    private void applyDetectorFrameRateCap(NSurveillance s, SentiveillanceProperties.People people) {
+        float seconds = people.getDetectorMinFrameTimeSeconds();
+        if (seconds <= 0) {
+            log.info("Detector frame-rate cap disabled - the SDK default applies");
+            return;
+        }
+        try {
+            s.setProperty("ObjectTracker.BatcherMinFrameTime", seconds);
+            log.info("Detector frame-rate cap: {}s between frames (~{} fps)",
+                    seconds, Math.round(1 / seconds));
+        } catch (Throwable t) {
+            log.warn("Could not set ObjectTracker.BatcherMinFrameTime={} - the SDK default stays "
+                    + "in place and the overlay will lag further behind: {}", seconds, t.toString());
+        }
     }
 
     private void loadWatchList(Collection<Employee> watchList) {
@@ -300,6 +375,7 @@ public class SurveillanceEngine {
                 continue;
             }
             surveillance.addTemplate(employee.getTemplateId(), employee.getFaceTemplate());
+            watchListNames.put(employee.getTemplateId(), employee.getFullName());
             added++;
         }
         log.info("Watch list loaded: {} template(s)", added);
@@ -382,6 +458,20 @@ public class SurveillanceEngine {
                 // never reaches the counters, the database or the dashboard.
                 nonHumanIgnored.incrementAndGet();
                 continue;
+            }
+
+            // Push to the dashboard first. The overlay used to be published from
+            // DetectionRecorder after the INSERT, which put the database on the critical path
+            // for something purely visual (measured: median 14 ms, worst 131 ms of queue wait
+            // behind the single writer thread). Nothing here touches JDBC.
+            try {
+                liveEvents.publish(snapshot, watchListNames.get(snapshot.matchedTemplateId()));
+            } catch (Exception e) {
+                log.debug("Could not push event to the dashboard: {}", e.toString());
+            }
+            if (snapshot.eventTime() != null) {
+                detectionLagMillis.set(Math.max(0,
+                        java.time.Duration.between(snapshot.eventTime(), Instant.now()).toMillis()));
             }
 
             eventsSeen.incrementAndGet();
@@ -498,7 +588,17 @@ public class SurveillanceEngine {
                 null);
     }
 
-    /** Writes the best frame of a finished track to disk, for eyeballing results. */
+    /**
+     * Captures the best frame of a finished track for eyeballing results.
+     *
+     * <p>Runs on the SDK callback thread, so it does the minimum that cannot be deferred:
+     * {@code best} is a native handle the caller disposes the moment this returns, so the
+     * pixels have to be encoded now. The resulting bytes are then handed to
+     * {@link #snapshotExecutor} and the file is written there - the disk write was the
+     * expensive half, and doing both inline cost 64-71 ms of the capture thread per subject.
+     *
+     * @return where the file will be written, or null if there was nothing to capture
+     */
     private String saveSnapshot(NSurveillanceEventDetails best, int traceIndex, String matchedId) {
         NImage image = null;
         try {
@@ -508,13 +608,27 @@ public class SurveillanceEngine {
                 return null;
             }
             Path dir = Path.of(properties.getSnapshots().getDirectory()).toAbsolutePath().normalize();
-            Files.createDirectories(dir);
             String name = String.format("%s_trace%03d_%s.jpg",
                     Instant.now().toEpochMilli(),
                     traceIndex,
                     matchedId == null ? "unknown" : matchedId);
             Path target = dir.resolve(name);
-            image.save(target.toString(), NImageFormat.getJPEG());
+
+            com.neurotec.io.NBuffer encoded = image.save(NImageFormat.getJPEG());
+            byte[] jpeg;
+            try {
+                jpeg = encoded.toByteArray();
+            } finally {
+                encoded.dispose();
+            }
+            snapshotExecutor.execute(() -> {
+                try {
+                    Files.createDirectories(dir);
+                    Files.write(target, jpeg);
+                } catch (Exception e) {
+                    log.warn("Could not write snapshot {}: {}", target, e.toString());
+                }
+            });
             return target.toString();
         } catch (Exception e) {
             log.warn("Could not save snapshot for trace {}: {}", traceIndex, e.toString());

@@ -22,6 +22,7 @@ public class SentiveillanceProperties {
     private Source source = new Source();
     private Faces faces = new Faces();
     private People people = new People();
+    private Live live = new Live();
     private Enrollment enrollment = new Enrollment();
     private Snapshots snapshots = new Snapshots();
 
@@ -133,6 +134,34 @@ public class SentiveillanceProperties {
     }
 
     /**
+     * The browser preview feed.
+     *
+     * <p>Encoding the preview competes with detection for CPU, and the source here is
+     * 2160x3840 - roughly 8 megapixels per JPEG. Measured with the detector at
+     * {@code detectorScaling=ONE}: no viewer attached, detection lag reached 3.5s; with a
+     * viewer pulling frames every 80ms it reached 4.9s. The frame interval is therefore a
+     * real tuning knob, not cosmetic.
+     *
+     * @author Md. Raihan Shikder (Raihan-89)
+     * @date 9 November, 2026
+     */
+    @Getter
+    @Setter
+    public static class Live {
+        /**
+         * Minimum gap between two encoded preview frames. 200ms = 5 fps, which looks fine
+         * for monitoring and costs well under half of what 80ms (12 fps) did. Lower it only
+         * if you have CPU to spare or a smaller source.
+         */
+        private long previewIntervalMillis = 200;
+        /**
+         * How long after a browser last asked for a frame encoding continues. With nothing
+         * watching, the capture listener does no work at all.
+         */
+        private long demandTimeoutMillis = 5_000;
+    }
+
+    /**
      * Person-related detection, and the switches that keep vehicles out of the pipeline.
      *
      * <p>The SDK's body detector is one model that emits PERSON, CAR, BUS, TRUCK and BIKE -
@@ -157,6 +186,26 @@ public class SentiveillanceProperties {
          * Raise it if furniture or shadows are being tracked as people.
          */
         private int detectorThreshold = 50;
+        /**
+         * How many scales the object detector runs: ONE, TWO, THREE or FOUR. Fewer scales is
+         * markedly faster and is the single biggest lever on detection latency.
+         *
+         * <p>Measured on this machine (CPU, 2160x3840 source), lag between a frame's SDK
+         * timestamp and its event reaching the writer: the SDK default TWO gave 3.6s rising
+         * to 7.5s over a clip, ONE gave 1.0s rising to 3.5s. Raise it only if small or
+         * distant people are being missed.
+         */
+        private String detectorScaling = "ONE";
+        /**
+         * Minimum seconds between frames handed to the detector - a frame-rate cap, and the
+         * difference between an overlay that keeps up and one that drifts further behind the
+         * longer the source runs. 0 leaves the SDK default (0.17s) alone.
+         *
+         * <p>Measured peak lag over the same clip at {@code detectorScaling=ONE}: 0.17s gave
+         * ~4900ms, 0.33s gave ~2270ms, 0.50s gave ~810ms. Both enrolled people were still
+         * recognised at every setting; what shrinks is the number of samples per visit.
+         */
+        private float detectorMinFrameTimeSeconds = 0.33f;
         /** Extract upper/lower clothing colour per tracked person. */
         private boolean detectClothingDetails = true;
         /** Classify a face/head covering - mask, hat, hood. */

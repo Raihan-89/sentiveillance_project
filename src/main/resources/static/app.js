@@ -10,6 +10,8 @@
   'use strict';
 
   var POLL_MILLIS = 2000;
+  /* Matches sentiveillance.live.preview-interval-millis; asking faster only wastes requests. */
+  var FRAME_INTERVAL_MILLIS = 200;
   var BOX_LIFETIME_MILLIS = 1200;   // how long a box stays after its last update
   var FEED_LIMIT = 60;
 
@@ -25,6 +27,7 @@
     stored: document.getElementById('mStored'),
     watch: document.getElementById('mWatch'),
     nonHuman: document.getElementById('mNonHuman'),
+    lag: document.getElementById('mLag'),
     stage: document.getElementById('stage'),
     stageEmptyTitle: document.getElementById('stageEmptyTitle'),
     stageEmptyHint: document.getElementById('stageEmptyHint'),
@@ -45,8 +48,14 @@
 
   // ---------------------------------------------------------------- helpers
 
+  /* no-store on every JSON read: these endpoints carry live counters and have no
+     Cache-Control header of their own, which leaves a browser free to serve a heuristically
+     cached copy and make the dashboard look frozen. */
   function getJson(url) {
-    return fetch(url, { headers: { Accept: 'application/json' } }).then(function (r) {
+    return fetch(url, {
+      cache: 'no-store',
+      headers: { Accept: 'application/json' }
+    }).then(function (r) {
       if (!r.ok) { throw new Error(url + ' -> ' + r.status); }
       return r.json();
     });
@@ -65,12 +74,48 @@
 
   // ------------------------------------------------------------ video stage
 
+  /* The feed used to be <img src="api/live/stream.mjpg">. MJPEG is a multipart response
+     that never ends, and an <img> is a document subresource, so the browser's load
+     indicator spun forever: the page looked permanently "loading" because it was waiting on
+     a request that by design can never finish.
+
+     Each frame is fetched as its own request instead and swapped in as a blob URL. Every
+     request completes, so the page reaches a finished state; the picture updates as before.
+     /api/live/stream.mjpg is left in place for anything that wants a real stream (VLC, ffplay).
+
+     The previous blob URL is revoked only once its replacement has decoded - revoking it
+     straight away can leave the <img> pointing at a URL that has already been released. */
+  var framePending = false;
+  var staleBlobUrl = null;
+
   function startVideo() {
-    // Cache-buster so a reload does not reuse a finished stream.
-    el.video.src = 'api/live/stream.mjpg?t=' + Date.now();
-    el.video.addEventListener('load', markFrameArrived);
-    // MJPEG keeps the request open, so 'load' may never fire in some browsers.
-    el.video.addEventListener('loadeddata', markFrameArrived);
+    el.video.addEventListener('load', function () {
+      markFrameArrived();
+      if (staleBlobUrl) {
+        URL.revokeObjectURL(staleBlobUrl);
+        staleBlobUrl = null;
+      }
+    });
+    pollFrame();
+    setInterval(pollFrame, FRAME_INTERVAL_MILLIS);
+  }
+
+  function pollFrame() {
+    // Never queue requests: if one is still in flight the next tick is simply skipped.
+    if (framePending) { return; }
+    framePending = true;
+    fetch('api/live/frame.jpg', { cache: 'no-store' })
+      .then(function (r) { return r.status === 200 ? r.blob() : null; })
+      .then(function (blob) {
+        if (!blob) { return; }           // 204 = nothing captured yet
+        var url = URL.createObjectURL(blob);
+        if (el.video.src && el.video.src.lastIndexOf('blob:', 0) === 0) {
+          staleBlobUrl = el.video.src;
+        }
+        el.video.src = url;
+      })
+      .catch(function () { /* transient - the next tick retries */ })
+      .then(function () { framePending = false; });
   }
 
   function markFrameArrived() {
@@ -246,6 +291,10 @@
     el.stored.textContent = status.storedEvents;
     el.watch.textContent = status.watchListSize;
     el.nonHuman.textContent = status.nonHumanIgnored;
+    // Milliseconds under a second, otherwise seconds - a 4-digit ms value is unreadable.
+    var lag = status.detectionLagMillis;
+    el.lag.textContent = lag == null ? '—'
+      : lag < 1000 ? lag + 'ms' : (lag / 1000).toFixed(1) + 's';
 
     var running = Boolean(status.running);
     el.runPill.className = 'pill ' + (running ? 'is-running' : 'is-stopped');
@@ -308,16 +357,6 @@
     });
   }
 
-  /* Oldest first, so inserting at the top leaves the newest on top. */
-  function prefill(rows) {
-    rows.slice().reverse().forEach(function (row) {
-      addFeedRow(row);
-      if (row.snapshotPath) {
-        addShot(row.snapshotPath.split('/').pop(), row.employee || 'unknown');
-      }
-    });
-  }
-
   function poll() {
     getJson('api/status').then(renderStatus).catch(function () {});
     getJson('api/live/meta').then(renderMeta).catch(function () {});
@@ -344,5 +383,9 @@
   setInterval(poll, POLL_MILLIS);
 
   getJson('api/employees').then(renderEmployees).catch(function () {});
-  getJson('api/detections?limit=40').then(prefill).catch(function () {});
+  /* The feed and the gallery are deliberately NOT seeded from /api/detections. They used to
+     be, which made a refresh look like cached output: those rows come from PostgreSQL, so
+     old events reappeared on every reload. Both panels now show only what arrives live over
+     SSE from the moment the page opens. The stored history is still queryable via
+     /api/detections. */
 }());

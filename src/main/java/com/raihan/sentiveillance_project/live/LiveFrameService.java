@@ -7,6 +7,7 @@ import com.neurotec.media.NVideoSample;
 import com.neurotec.surveillance.NSurveillanceEvent;
 import com.neurotec.surveillance.NSurveillanceEventDetails;
 import com.neurotec.surveillance.NSurveillanceListener;
+import com.raihan.sentiveillance_project.config.SentiveillanceProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -25,11 +26,14 @@ import java.util.concurrent.atomic.AtomicReference;
  * encoder ({@code NImage.save(NImageFormat.getJPEG())}) instead of going through AWT.
  *
  * <h2>Why it costs nothing when nobody is watching</h2>
- * Encoding every frame of a 2688x1520 stream would compete with the detector for CPU. Frames
- * are therefore only encoded while a browser has asked for one in the last
- * {@value #DEMAND_TIMEOUT_MILLIS} ms, and at most one every {@value #MIN_INTERVAL_MILLIS} ms.
- * With no UI open the listener does nothing but dispose the handles it was given - the
- * detection pipeline behaves exactly as it did before this class existed.
+ * Encoding preview frames competes with detection for CPU, and measurably so: with the
+ * detector at {@code detectorScaling=ONE} on a 2160x3840 source, detection lag peaked at
+ * 3.5s with nobody watching and 4.9s with a browser pulling a frame every 80ms. Frames are
+ * therefore only encoded while a browser asked for one recently
+ * ({@code sentiveillance.live.demand-timeout-millis}) and no more often than
+ * {@code sentiveillance.live.preview-interval-millis}. With no UI open the listener does
+ * nothing but dispose the handles it was given - the detection pipeline behaves exactly as
+ * it did before this class existed.
  *
  * @author Md. Raihan Shikder (Raihan-89)
  * @date 9 November, 2026
@@ -37,11 +41,6 @@ import java.util.concurrent.atomic.AtomicReference;
 @Slf4j
 @Service
 public class LiveFrameService {
-
-    /** How long after a browser request frames keep being encoded. */
-    private static final long DEMAND_TIMEOUT_MILLIS = 5_000L;
-    /** Lower bound between two encodes - roughly a 12 fps ceiling for the browser. */
-    private static final long MIN_INTERVAL_MILLIS = 80L;
 
     private final AtomicReference<byte[]> latestJpeg = new AtomicReference<>();
     private final AtomicLong framesEncoded = new AtomicLong();
@@ -54,6 +53,12 @@ public class LiveFrameService {
 
     /** The listener instance to hand to {@code NSurveillance.addImageCapturedListener}. */
     private final NSurveillanceListener listener = this::onImageCaptured;
+
+    private final SentiveillanceProperties properties;
+
+    public LiveFrameService(SentiveillanceProperties properties) {
+        this.properties = properties;
+    }
 
     public NSurveillanceListener listener() {
         return listener;
@@ -116,8 +121,10 @@ public class LiveFrameService {
     }
 
     private void encodeIfWanted(NSurveillanceEventDetails details) {
+        SentiveillanceProperties.Live cfg = properties.getLive();
         long now = System.currentTimeMillis();
-        if (now - lastDemandAt > DEMAND_TIMEOUT_MILLIS || now - lastEncodeAt < MIN_INTERVAL_MILLIS) {
+        if (now - lastDemandAt > cfg.getDemandTimeoutMillis()
+                || now - lastEncodeAt < cfg.getPreviewIntervalMillis()) {
             framesSkipped.incrementAndGet();
             return;
         }

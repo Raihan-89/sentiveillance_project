@@ -40,8 +40,6 @@ import java.util.Map;
 public class LiveController {
 
     private static final String BOUNDARY = "sentiveillanceframe";
-    /** Matches the encoder ceiling in {@code LiveFrameService}. */
-    private static final long STREAM_INTERVAL_MILLIS = 80L;
 
     private final LiveFrameService frames;
     private final LiveEventStream events;
@@ -96,7 +94,9 @@ public class LiveController {
                         writePart(out, jpeg);
                         previous = jpeg;
                     }
-                    Thread.sleep(STREAM_INTERVAL_MILLIS);
+                    // Poll a little faster than the encoder produces, so a new frame is
+                    // forwarded promptly without busy-waiting.
+                    Thread.sleep(Math.max(20L, properties.getLive().getPreviewIntervalMillis() / 2));
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
