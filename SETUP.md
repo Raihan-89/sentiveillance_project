@@ -358,7 +358,18 @@ ffprobe -rtsp_transport tcp "rtsp://USER:PASS@CAMERA_IP:554/cam/realmonitor?chan
 
 ### Switch the app over
 
-In `src/main/resources/application.properties`:
+Two ways, and neither needs a code change.
+
+**From the dashboard (no restart).** Live view → **IP camera** → **Add camera…**. Paste the
+full RTSP URL, or leave the URL empty and fill in host / port / user / password / channel /
+stream and let the app assemble the Dahua URL — a password containing `@` or `:` is
+percent-encoded for you, which is the single most common reason a camera that works in its
+own web UI refuses to open over RTSP. **Test** connects, reports what answered and
+disconnects again without disturbing whatever is playing; **Save & use** makes it the live
+source. Saved cameras persist in the `ip_camera` table, so they are still there after a
+restart.
+
+**From the configuration (used at boot).** In `src/main/resources/application.properties`:
 
 ```properties
 sentiveillance.source.type=IP_CAMERA
@@ -367,7 +378,13 @@ sentiveillance.source.url=rtsp://svc:secret@192.168.1.108:554/cam/realmonitor?ch
 #sentiveillance.source.file=   <- ignored for IP_CAMERA
 ```
 
-No code changes. The password is masked in the logs.
+A camera configured this way is also registered in the dashboard's camera list on startup,
+so you can play a video file and then switch back to it without editing the file again.
+
+The password is masked in the logs, in the API and in the browser. It is **not** encrypted at
+rest: it sits in `application.properties` or in the `ip_camera.url` column in plain text, the
+same way the database password does. Give the app a dedicated read-only camera account rather
+than the camera's `admin` login.
 
 **Use the main stream.** This camera is 4MP (2688×1520); at a ceiling mount the sub stream's
 faces are usually below the inter-ocular-distance limit. Start on the main stream, and only
@@ -412,6 +429,8 @@ camera it runs until stopped.
 | Pause the source | `curl -X POST localhost:8080/api/surveillance/stop` |
 | Resume it | `curl -X POST localhost:8080/api/surveillance/start` |
 | Saved face frames | `ls var/snapshots/` |
+| What is playing now | `curl -s localhost:8080/api/source` |
+| Saved cameras | `curl -s localhost:8080/api/source/cameras` |
 
 ### Add or change an employee
 
@@ -425,22 +444,72 @@ To re-extract templates for people already enrolled (after changing
 
 ### Switch between the video file and the camera
 
-Use **Choose video** on the dashboard to import a video from your computer. Once the
-upload finishes, the engine switches to it and starts capture. The dropdown replays
-previously uploaded videos without another upload. Existing watch-list templates and
-settings are retained; a failed switch attempts to restore the previous source.
+The **Live view** panel has a **Video file / IP camera** switch. Both kinds of source go
+through the same door in the SDK — the `Media` device plugin, with a `FileName` parameter for
+a file and a `Url` parameter for a camera — so switching between them keeps the watch list,
+the thresholds and the counters exactly as they are. A failed switch restores the previous
+source.
 
-Files are retained in `sentiveillance.source.uploads-directory` (default `var/uploads`)
-with unique filenames, so importing another file with the same name does not overwrite
-an active video. Supported extensions: mp4, avi, mkv, mov, m4v, mpg, mpeg, wmv, flv,
-webm, ts. Actual decoding depends on the SDK Media plugin and installed codecs.
-Uploads default to a 2 GB multipart limit; adjust `spring.servlet.multipart.max-file-size`
-and `spring.servlet.multipart.max-request-size` together if needed.
+**Video file.** **Choose video** imports a video from your computer; the engine switches to it
+and starts capture once the upload finishes. The dropdown replays previously uploaded videos
+without another upload. Files are kept in `sentiveillance.source.uploads-directory` (default
+`var/uploads`) with unique filenames, so importing another file with the same name does not
+overwrite an active video. Supported extensions: mp4, avi, mkv, mov, m4v, mpg, mpeg, wmv, flv,
+webm, ts — actual decoding depends on the SDK Media plugin and the installed codecs. Uploads
+default to a 2 GB multipart limit; adjust `spring.servlet.multipart.max-file-size` and
+`spring.servlet.multipart.max-request-size` together if needed.
 
-The API is `GET /api/source/videos`, multipart `POST /api/source/video` with a `file`
-field, and `POST /api/source/video/{name}` to replay an uploaded file. Selections apply
-to the current process; restarting returns to the configured `sentiveillance.source.*`
-source. To switch to an IP camera, update those properties (see section 4) and restart.
+**IP camera.** The dropdown lists saved cameras, with what each one reported the last time it
+answered. **Test** connects through the SDK, reports resolution / frame rate / codec, and
+disconnects — the live source is untouched, so it is safe to test one camera while another is
+running. **Use** makes the selected camera the live source. **Remove** deletes it from the
+list, and refuses while it is the live source. Cameras live in the `ip_camera` table and
+survive a restart; the one in `application.properties` is added to the list automatically.
+
+A camera can fail in three ways that the SDK reports identically, so they are separated before
+the SDK is involved and the dashboard says which happened:
+
+| What you see | What it means |
+|---|---|
+| *Not a camera URL…* | the URL is malformed — checked without touching the network |
+| *Nothing answered at HOST:554* | the host or the RTSP port is unreachable (plain TCP connect, 3 s) |
+| *Camera did not answer within 20s* | the port is open but the stream never opened — usually wrong credentials or a wrong path |
+| *Connected, stream not negotiated yet* | the plugin has the device but has not pulled a frame yet; normal before capture starts |
+
+The **Source** panel beside the live video shows what the engine actually holds: the masked
+address, the device make/model the plugin reported, the negotiated stream (`2688×1520 @ 25 fps
+H264`), which decoder backend is in use, whether capture is running and whether a frame has
+arrived yet — a camera that connected but delivers nothing shows as *running, no frame yet*
+rather than looking healthy. For a camera it also states how large a head has to be **on that
+stream** for recognition to be possible, derived from
+`faces.minimal-inter-ocular-distance` — the same arithmetic `scripts/check-camera.sh` prints,
+and the most common reason a correctly configured ceiling camera never identifies anybody.
+
+The API behind all of it:
+
+| Call | Does |
+|---|---|
+| `GET /api/source` | what is playing now, either kind, plus the SDK's view of the device |
+| `GET /api/source/videos` | uploaded videos |
+| `POST /api/source/video` (multipart `file`) | import a video and switch to it |
+| `POST /api/source/video/{name}` | replay an uploaded video |
+| `GET /api/source/cameras` | saved cameras, passwords masked |
+| `POST /api/source/cameras` (`?activate=true`) | save a camera, optionally make it live |
+| `POST /api/source/cameras/test` | test a camera that is not saved yet |
+| `POST /api/source/cameras/{id}/test` | test a saved camera |
+| `POST /api/source/cameras/{id}/activate` | make a saved camera the live source |
+| `DELETE /api/source/cameras/{id}` | remove a saved camera |
+
+Example, straight from the shell:
+
+```bash
+curl -s -X POST localhost:8080/api/source/cameras/test \
+  -H 'Content-Type: application/json' \
+  -d '{"host":"192.168.1.108","username":"svc","password":"secret","subtype":0}'
+```
+
+Selections apply immediately and the camera list is persistent, but the *boot* source is still
+whatever `sentiveillance.source.*` says — a restart goes back to that.
 
 ### Recognized faces on the dashboard
 
@@ -469,6 +538,10 @@ Nothing here assumes one camera — only the configuration does:
   code starts and stops **per source** (`startSource`) rather than globally.
 - `SurveillanceSourceFactory` builds a source from one `Source` config block; making
   `sentiveillance.source` a list and looping is the whole change.
+- The `ip_camera` table already holds many cameras — today only one of them can be the live
+  source at a time, because the engine keeps a single `source` field. Running several means
+  holding a source per camera row instead, which is what `startSource`/`stopSource` being
+  per-source already allows.
 - `DetectionEvent.sourceName` is already on every row, and `trace_index` is only unique
   *within* a source — so the natural key is `(source_name, trace_index)`, which is how the
   index is already defined.

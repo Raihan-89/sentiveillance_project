@@ -120,6 +120,82 @@ label.btn { cursor: pointer; }
 }
 .source-bar .is-busy-text { color: var(--accent); }
 .source-bar .is-error { color: var(--danger); }
+.source-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+/* An explicit display: wins over the hidden attribute's UA rule, so say it again. */
+.source-row[hidden] { display: none; }
+.picker-wide { max-width: 100%; flex: 1 1 200px; }
+
+/* ---------- source kind switch ---------- */
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--bg-sunken);
+}
+.seg-btn {
+  padding: 4px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+.seg-btn.is-active { background: var(--bg-raised); color: var(--text); }
+
+/* ---------- add-camera form ---------- */
+
+.camera-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 12px;
+  padding: 13px 15px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-sunken);
+}
+.camera-form[hidden] { display: none; }
+.field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.field-wide { grid-column: 1 / -1; }
+.field label { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); }
+.field input, .field select {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  min-width: 0;
+}
+.form-hint { grid-column: 1 / -1; margin: 0; font-size: 11.5px; color: var(--text-dim); }
+.form-hint code { font-size: 11px; }
+.form-actions {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.form-actions .muted { flex: 1 1 100%; }
+.form-actions .is-error { color: var(--danger); font-size: 12px; }
+.form-actions .is-ok { color: var(--known); font-size: 12px; }
+.form-actions .is-busy-text { color: var(--accent); font-size: 12px; }
+
+/* ---------- source details ---------- */
+
+.details { margin: 0; padding: 11px 15px; font-size: 12.5px; }
+.details div {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 8px;
+  padding: 3px 0;
+}
+.details dt { color: var(--text-dim); font-size: 11.5px; }
+.details dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.details dd.is-ok { color: var(--known); }
+.details dd.is-warn { color: var(--unknown); }
+.details .hint { color: var(--text-dim); font-size: 11.5px; }
 
 /* ---------- tiles ---------- */
 

@@ -38,6 +38,32 @@
     videoFile: document.getElementById('videoFile'),
     videoPicker: document.getElementById('videoPicker'),
     sourceStatus: document.getElementById('sourceStatus'),
+    tabVideo: document.getElementById('tabVideo'),
+    tabCamera: document.getElementById('tabCamera'),
+    paneVideo: document.getElementById('paneVideo'),
+    paneCamera: document.getElementById('paneCamera'),
+    cameraPicker: document.getElementById('cameraPicker'),
+    cameraUseBtn: document.getElementById('cameraUseBtn'),
+    cameraTestBtn: document.getElementById('cameraTestBtn'),
+    cameraDeleteBtn: document.getElementById('cameraDeleteBtn'),
+    cameraAddBtn: document.getElementById('cameraAddBtn'),
+    cameraForm: document.getElementById('cameraForm'),
+    cameraFormStatus: document.getElementById('cameraFormStatus'),
+    camUrl: document.getElementById('camUrl'),
+    camName: document.getElementById('camName'),
+    camHost: document.getElementById('camHost'),
+    camPort: document.getElementById('camPort'),
+    camUser: document.getElementById('camUser'),
+    camPass: document.getElementById('camPass'),
+    camChannel: document.getElementById('camChannel'),
+    camSubtype: document.getElementById('camSubtype'),
+    camFlags: document.getElementById('camFlags'),
+    camTestBtn: document.getElementById('camTestBtn'),
+    camSaveBtn: document.getElementById('camSaveBtn'),
+    camSaveUseBtn: document.getElementById('camSaveUseBtn'),
+    camCancelBtn: document.getElementById('camCancelBtn'),
+    sourceDetails: document.getElementById('sourceDetails'),
+    sourceKind: document.getElementById('sourceKind'),
     feed: document.getElementById('feed'),
     feedState: document.getElementById('feedState'),
     watchList: document.getElementById('watchList'),
@@ -140,6 +166,7 @@
     el.videoPicker.disabled = busy;
     el.startBtn.disabled = busy || sourceRunning;
     el.stopBtn.disabled = busy || !sourceRunning;
+    cameraControls();
   }
 
   function postJson(url, options) {
@@ -158,14 +185,16 @@
 
   function afterSwitch(res) {
     if (!res.ok) {
-      note(res.body.error || 'Could not switch video.', 'error');
+      note(res.body.error || 'Could not switch source.', 'error');
       loadVideoList();
+      loadCameras();
       poll();
       return;
     }
     note((res.body.running ? 'Now playing ' : 'Selected ') + res.body.current, null);
     el.stage.classList.remove('has-frame');
     loadVideoList();
+    loadCameras();
     poll();
   }
 
@@ -198,6 +227,284 @@
         el.videoPicker.appendChild(opt);
       });
     }).catch(function () {});
+  }
+
+  /* ------------------------------------------------------------- IP cameras
+
+     A camera is not just "a video file with a URL": it can be unreachable, it can refuse
+     the credentials, and it can accept the connection and then deliver nothing. So the
+     camera pane has a Test that connects, reports what answered and disconnects again -
+     without touching whatever the engine is currently running. */
+
+  var cameraList = [];
+  var activeCameraId = null;
+  var lastSource = null;
+  var lastMeta = null;
+  var tabChosen = false;
+  var sourceTab = 'VIDEO_FILE';
+
+  function jsonBody(payload) {
+    return {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    };
+  }
+
+  function selectedCamera() {
+    var id = el.cameraPicker.value;
+    if (!id) { return null; }
+    for (var i = 0; i < cameraList.length; i++) {
+      if (String(cameraList[i].id) === id) { return cameraList[i]; }
+    }
+    return null;
+  }
+
+  function cameraControls() {
+    var has = Boolean(selectedCamera());
+    el.cameraPicker.disabled = sourceBusy || !cameraList.length;
+    el.cameraUseBtn.disabled = sourceBusy || !has;
+    el.cameraTestBtn.disabled = sourceBusy || !has;
+    el.cameraDeleteBtn.disabled = sourceBusy || !has;
+    el.cameraAddBtn.disabled = sourceBusy;
+  }
+
+  /* Describes what the SDK reported for a camera. width is 0 until the plugin has
+     negotiated the stream, which only happens once frames are actually pulled. */
+  function describeCamera(cam) {
+    if (!cam) { return 'connected'; }
+    if (!cam.width) { return 'connected, stream not negotiated yet'; }
+    return cam.width + '\u00d7' + cam.height
+      + (cam.frameRate ? ' @ ' + cam.frameRate + ' fps' : '')
+      + (cam.codec ? ' ' + cam.codec : '');
+  }
+
+  function loadCameras(preferId) {
+    return getJson('api/source/cameras').then(function (data) {
+      cameraList = data.cameras || [];
+      activeCameraId = data.activeId;
+      var wanted = preferId != null ? String(preferId) : el.cameraPicker.value;
+      el.cameraPicker.textContent = '';
+      if (!cameraList.length) {
+        var none = document.createElement('option');
+        none.value = '';
+        none.textContent = 'No cameras saved yet';
+        el.cameraPicker.appendChild(none);
+      } else {
+        var available = {};
+        cameraList.forEach(function (c) {
+          available[String(c.id)] = true;
+          var opt = document.createElement('option');
+          opt.value = String(c.id);
+          opt.textContent = c.name
+            + (c.active ? ' \u2014 live' : '')
+            + (c.width ? ' \u00b7 ' + c.width + '\u00d7' + c.height : '')
+            + (c.lastOk === false ? ' \u00b7 last attempt failed' : '');
+          el.cameraPicker.appendChild(opt);
+        });
+        el.cameraPicker.value = available[wanted] ? wanted
+          : activeCameraId != null ? String(activeCameraId)
+          : String(cameraList[0].id);
+      }
+      cameraControls();
+    }).catch(function () {});
+  }
+
+  function useCamera() {
+    var camera = selectedCamera();
+    if (!camera || sourceBusy) { return; }
+    sourceBusyState(true);
+    note('Connecting to ' + camera.name + '\u2026', 'busy');
+    postJson('api/source/cameras/' + camera.id + '/activate', { method: 'POST' })
+      .then(afterSwitch)
+      .catch(function () { note('Could not reach the camera.', 'error'); })
+      .then(function () { sourceBusyState(false); });
+  }
+
+  function testCamera() {
+    var camera = selectedCamera();
+    if (!camera || sourceBusy) { return; }
+    sourceBusyState(true);
+    note('Testing ' + camera.name + '\u2026 (up to 20s)', 'busy');
+    postJson('api/source/cameras/' + camera.id + '/test', { method: 'POST' })
+      .then(function (res) {
+        note(res.ok ? camera.name + ': ' + describeCamera(res.body.camera)
+          : (res.body.error || 'Test failed.'), res.ok ? null : 'error');
+        loadCameras(camera.id);
+      })
+      .catch(function () { note('Test failed.', 'error'); })
+      .then(function () { sourceBusyState(false); });
+  }
+
+  function deleteCamera() {
+    var camera = selectedCamera();
+    if (!camera || sourceBusy) { return; }
+    if (!window.confirm('Remove camera "' + camera.name + '" from the list?')) { return; }
+    sourceBusyState(true);
+    fetch('api/source/cameras/' + camera.id, { method: 'DELETE' })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) {
+        note(r.ok ? 'Removed ' + camera.name : (b.error || 'Could not remove it.'), r.ok ? null : 'error');
+      }); })
+      .catch(function () { note('Could not remove it.', 'error'); })
+      .then(function () { sourceBusyState(false); loadCameras(); });
+  }
+
+  // ------------------------------------------------------- the add-camera form
+
+  function formNote(message, kind) {
+    el.cameraFormStatus.textContent = message;
+    el.cameraFormStatus.className = kind === 'busy' ? 'is-busy-text'
+      : kind === 'error' ? 'is-error'
+      : kind === 'ok' ? 'is-ok' : 'muted';
+  }
+
+  function showCameraForm(show) {
+    el.cameraForm.hidden = !show;
+    if (show) {
+      formNote('', null);
+      el.camUrl.focus();
+    } else {
+      el.camPass.value = '';       // never leave a camera password sitting in the page
+    }
+  }
+
+  function cameraFormPayload() {
+    return {
+      name: el.camName.value.trim() || null,
+      url: el.camUrl.value.trim() || null,
+      host: el.camHost.value.trim() || null,
+      port: Number(el.camPort.value) || 554,
+      username: el.camUser.value || null,
+      password: el.camPass.value || null,
+      channel: Number(el.camChannel.value) || 1,
+      subtype: Number(el.camSubtype.value) || 0,
+      flags: el.camFlags.value || null
+    };
+  }
+
+  function formFilledIn() {
+    if (el.camUrl.value.trim() || el.camHost.value.trim()) { return true; }
+    formNote('Give either a full URL or a host/IP address.', 'error');
+    return false;
+  }
+
+  function testNewCamera() {
+    if (!formFilledIn()) { return; }
+    formNote('Connecting\u2026 (up to 20s)', 'busy');
+    postJson('api/source/cameras/test', jsonBody(cameraFormPayload()))
+      .then(function (res) {
+        if (!res.ok) { formNote(res.body.error || 'Test failed.', 'error'); return; }
+        formNote(res.body.url + ' \u2014 ' + describeCamera(res.body.camera), 'ok');
+      })
+      .catch(function () { formNote('Test failed.', 'error'); });
+  }
+
+  function saveCamera(activate) {
+    if (!formFilledIn()) { return; }
+    formNote(activate ? 'Saving and connecting\u2026' : 'Saving\u2026', 'busy');
+    if (activate) { sourceBusyState(true); }
+    postJson('api/source/cameras' + (activate ? '?activate=true' : ''), jsonBody(cameraFormPayload()))
+      .then(function (res) {
+        if (!res.ok) {
+          formNote(res.body.error || 'Could not save the camera.', 'error');
+          loadCameras();
+          return;
+        }
+        formNote('Saved as "' + res.body.name + '"', 'ok');
+        loadCameras(res.body.id);
+        if (activate) {
+          showCameraForm(false);
+          note('Now playing ' + res.body.current, null);
+          el.stage.classList.remove('has-frame');
+          poll();
+        }
+      })
+      .catch(function () { formNote('Could not save the camera.', 'error'); })
+      .then(function () { if (activate) { sourceBusyState(false); } });
+  }
+
+  // --------------------------------------------------------- which pane shows
+
+  function showTab(kind) {
+    sourceTab = kind;
+    var camera = kind === 'IP_CAMERA';
+    el.tabCamera.classList.toggle('is-active', camera);
+    el.tabVideo.classList.toggle('is-active', !camera);
+    el.paneCamera.hidden = !camera;
+    el.paneVideo.hidden = camera;
+    if (!camera) { showCameraForm(false); }
+  }
+
+  // -------------------------------------------------------- source details
+
+  function detailRow(parent, label, value, cls) {
+    if (value == null || value === '') { return; }
+    var wrap = document.createElement('div');
+    var dt = document.createElement('dt');
+    dt.textContent = label;
+    var dd = document.createElement('dd');
+    dd.textContent = value;
+    if (cls) { dd.className = cls; }
+    wrap.appendChild(dt);
+    wrap.appendChild(dd);
+    parent.appendChild(wrap);
+  }
+
+  function renderSource(data) {
+    lastSource = data;
+    /* The pane follows whatever is actually playing, but only until the operator picks a
+       tab - otherwise a poll two seconds later would snatch it back. */
+    if (!tabChosen) { showTab(data.type === 'IP_CAMERA' ? 'IP_CAMERA' : 'VIDEO_FILE'); }
+    renderSourceDetails();
+  }
+
+  function renderSourceDetails() {
+    var src = lastSource;
+    if (!src) { return; }
+    var isCamera = src.type === 'IP_CAMERA';
+    var cam = src.camera || {};
+    el.sourceKind.textContent = isCamera ? 'IP camera' : 'video file';
+
+    var list = document.createDocumentFragment();
+    detailRow(list, 'Name', src.name);
+    if (isCamera) {
+      detailRow(list, 'Address', src.url);
+    } else {
+      detailRow(list, 'File', src.file);
+    }
+    detailRow(list, 'Device', [cam.make, cam.model].filter(Boolean).join(' ') || null);
+    if (cam.width) {
+      detailRow(list, 'Stream', describeCamera(cam));
+    }
+    detailRow(list, 'Decoder', src.flags || 'SDK default');
+    detailRow(list, 'Detector', src.detectPeople ? 'faces + bodies' : 'faces only');
+
+    var hasFrame = lastMeta && lastMeta.hasFrame;
+    detailRow(list, 'Capture',
+      !src.running ? 'stopped'
+        : hasFrame ? 'running'
+        : 'running, no frame yet',
+      !src.running ? null : hasFrame ? 'is-ok' : 'is-warn');
+    if (lastMeta && lastMeta.frameWidth) {
+      detailRow(list, 'Preview', lastMeta.frameWidth + '\u00d7' + lastMeta.frameHeight
+        + ' \u00b7 ' + lastMeta.framesEncoded + ' encoded');
+    }
+
+    /* Same guidance as scripts/check-camera.sh: recognition needs the eyes at least
+       minimal-inter-ocular-distance pixels apart, which on a given stream width translates
+       into a head of a certain size. It is the single most common reason a correctly
+       configured ceiling camera never identifies anybody. */
+    var width = cam.width || (lastMeta ? lastMeta.frameWidth : 0);
+    if (isCamera && width) {
+      var iod = src.minimalInterOcularDistance || 24;
+      var low = Math.round(width / 22 * iod / 24);
+      var high = Math.round(width / 14 * iod / 24);
+      detailRow(list, 'Face size', 'heads should span \u2248' + low + '\u2013' + high
+        + 'px here (eyes \u2265' + iod + 'px apart)', 'hint');
+    }
+
+    el.sourceDetails.textContent = '';
+    el.sourceDetails.appendChild(list);
   }
 
   function markFrameArrived() {
@@ -320,12 +627,15 @@
   }
 
   function renderMeta(meta) {
+    lastMeta = meta;
     sourceDims.width = meta.frameWidth;
     sourceDims.height = meta.frameHeight;
-    el.sourceLine.textContent = meta.sourceName + ' · ' + meta.sourceType;
+    el.sourceLine.textContent = meta.sourceName + ' · '
+      + (meta.sourceType === 'IP_CAMERA' ? 'IP camera' : 'video file');
     el.frameInfo.textContent = meta.frameWidth
       ? meta.frameWidth + '×' + meta.frameHeight
       : '';
+    renderSourceDetails();
   }
 
   function renderEmployees(list) {
@@ -560,6 +870,7 @@
 
   function poll() {
     getJson('api/status').then(renderStatus).catch(function () {});
+    getJson('api/source').then(renderSource).catch(function () {});
     getJson('api/live/meta').then(renderMeta).catch(function () {});
     getJson('api/live/recognized').then(renderRecognized).catch(function () {
       el.recognizedState.textContent = 'reconnecting…';
@@ -595,6 +906,18 @@
       .then(function () { sourceBusyState(false); });
   });
 
+  el.tabVideo.addEventListener('click', function () { tabChosen = true; showTab('VIDEO_FILE'); });
+  el.tabCamera.addEventListener('click', function () { tabChosen = true; showTab('IP_CAMERA'); });
+  el.cameraPicker.addEventListener('change', cameraControls);
+  el.cameraUseBtn.addEventListener('click', useCamera);
+  el.cameraTestBtn.addEventListener('click', testCamera);
+  el.cameraDeleteBtn.addEventListener('click', deleteCamera);
+  el.cameraAddBtn.addEventListener('click', function () { showCameraForm(el.cameraForm.hidden); });
+  el.camTestBtn.addEventListener('click', testNewCamera);
+  el.camSaveBtn.addEventListener('click', function () { saveCamera(false); });
+  el.camSaveUseBtn.addEventListener('click', function () { saveCamera(true); });
+  el.camCancelBtn.addEventListener('click', function () { showCameraForm(false); });
+
   el.startBtn.addEventListener('click', control('api/surveillance/start'));
   el.stopBtn.addEventListener('click', control('api/surveillance/stop'));
 
@@ -605,6 +928,7 @@
 
   refreshPanels();
   loadVideoList();
+  loadCameras();
   /* The queue is re-read on a slow timer as well: new candidates only appear when somebody
      leaves the frame, which no live event announces. */
   setInterval(function () {

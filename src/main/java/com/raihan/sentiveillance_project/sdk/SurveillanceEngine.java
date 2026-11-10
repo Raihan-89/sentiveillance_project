@@ -95,6 +95,35 @@ public class SurveillanceEngine {
     private final ExecutorService snapshotExecutor =
             Executors.newSingleThreadExecutor(r -> new Thread(r, "snapshot-writer"));
 
+    /**
+     * Camera tests run here rather than on the request thread: connecting to a camera that
+     * is not there blocks inside the plugin's ffmpeg for as long as its own timeout, and one
+     * thread doing that is enough. The lock keeps two tests from reaching the device manager
+     * at once.
+     */
+    private final ExecutorService probeExecutor =
+            Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "camera-probe");
+                t.setDaemon(true);
+                return t;
+            });
+    private final java.util.concurrent.locks.ReentrantLock probeLock =
+            new java.util.concurrent.locks.ReentrantLock();
+
+    /** How long {@link #sourceDetails()} may serve the device description it last read. */
+    private static final long DETAILS_CACHE_MILLIS = 10_000;
+    /**
+     * {@code sentiveillance.source.flags} as configured at boot.
+     *
+     * <p>Held separately because the live configuration is rewritten on every source switch:
+     * a camera that specifies its own decoder flags would otherwise leave them applied to
+     * whatever is attached next, and the configured default would be unrecoverable after the
+     * first switch.
+     */
+    private final String configuredFlags;
+    private volatile CameraDetails cachedDetails;
+    private volatile long cachedDetailsAt;
+
     private NSurveillance surveillance;
     private NSurveillanceSource source;
 
@@ -150,6 +179,8 @@ public class SurveillanceEngine {
     private final NSurveillanceListener onSubjectDisappeared = e -> handle(e, "SUBJECT_DISAPPEARED");
     private final com.neurotec.event.ChangeListener onRunningChanged = e -> {
         running = surveillance != null && surveillance.isRunning();
+        // The camera's own capture state just changed, so the cached description is stale.
+        forgetSourceDetails();
         log.info("Surveillance running = {}", running);
     };
 
@@ -169,6 +200,7 @@ public class SurveillanceEngine {
         this.liveEvents = liveEvents;
         this.unknownSubjects = unknownSubjects;
         this.recognizedPeople = recognizedPeople;
+        this.configuredFlags = properties.getSource().getFlags();
     }
 
     /**
@@ -272,27 +304,84 @@ public class SurveillanceEngine {
      * @return the name now reported for the source
      */
     public synchronized String useVideoFile(Path file) {
-        if (surveillance == null) {
-            throw new IllegalStateException("Surveillance engine is not started");
-        }
         if (!Files.isRegularFile(file) || !Files.isReadable(file)) {
             throw new IllegalArgumentException("Video file not readable: " + file);
         }
-
-        SentiveillanceProperties.Source cfg = properties.getSource();
-        SentiveillanceProperties.Source next = new SentiveillanceProperties.Source();
+        SentiveillanceProperties.Source next = inheritedConfig();
         next.setType(SentiveillanceProperties.Source.Type.VIDEO_FILE);
         next.setFile(file.toString());
+        next.setUrl(null);
         next.setName(file.getFileName().toString());
-        next.setFlags(cfg.getFlags());
+        return switchTo(next);
+    }
+
+    /**
+     * Swaps the running source for a network camera and starts capturing it.
+     *
+     * <p>Same mechanics as {@link #useVideoFile}: the Media device plugin takes a {@code Url}
+     * instead of a {@code FileName} and everything downstream is unchanged. What differs in
+     * practice is failure mode - a file is either readable or not, while a camera can be
+     * unreachable, refuse the credentials, or accept the connection and then never deliver a
+     * frame. Only the first two surface as an exception from here; a silent stream shows up as
+     * {@code hasFrame=false} on {@code /api/live/meta} with the source reported as running.
+     *
+     * @param name  label stored on every detection row from this camera
+     * @param url   rtsp/http URL, credentials included
+     * @param flags optional Media-plugin flags, or null to use the configured default
+     * @return the name now reported for the source
+     */
+    public synchronized String useIpCamera(String name, String url, String flags) {
+        SentiveillanceProperties.Source next = inheritedConfig();
+        next.setType(SentiveillanceProperties.Source.Type.IP_CAMERA);
+        next.setUrl(CameraUrls.parse(url).url());
+        next.setFile(null);
+        next.setName(name == null || name.isBlank() ? CameraUrls.parse(url).host() : name.trim());
+        if (flags != null && !flags.isBlank()) {
+            next.setFlags(flags.trim());
+        }
+        return switchTo(next);
+    }
+
+    /**
+     * A copy of the live configuration, to be overwritten with the parts that identify the new
+     * source. Carries across the settings that are a property of this deployment rather than of
+     * one source - plugin flags and whether the body detector runs - so switching sources never
+     * silently changes detection behaviour.
+     */
+    private SentiveillanceProperties.Source inheritedConfig() {
+        SentiveillanceProperties.Source cfg = properties.getSource();
+        SentiveillanceProperties.Source next = new SentiveillanceProperties.Source();
+        next.setFlags(configuredFlags);
         next.setDetectPeople(cfg.isDetectPeople());
+        next.setUploadsDirectory(cfg.getUploadsDirectory());
+        next.setAutoStart(cfg.isAutoStart());
+        return next;
+    }
+
+    /**
+     * Connects the replacement source, puts it in place of the current one, and starts it.
+     *
+     * <p>Order matters: connect before stopping anything, and restore the previous source if
+     * starting the replacement fails. Listeners live on the engine, not the source, so nothing
+     * needs resubscribing. The old camera is disconnected only once the replacement is running.
+     *
+     * <p>The configured source is updated in place rather than kept separately, so everything
+     * reading it downstream - the name stored on each detection row, {@code /api/live/meta},
+     * {@code /api/source} - describes what is actually playing.
+     */
+    private String switchTo(SentiveillanceProperties.Source next) {
+        if (surveillance == null) {
+            throw new IllegalStateException("Surveillance engine is not started");
+        }
+
+        SentiveillanceProperties.Source cfg = properties.getSource();
 
         // Validate/connect before touching the current source or its configuration.
         NSurveillanceSource replacement = sourceFactory.create(surveillance, next);
         NSurveillanceSource previous = source;
         boolean wasRunning = running;
         var oldType = cfg.getType();
-        String oldFile = cfg.getFile(), oldName = cfg.getName(), oldUrl = cfg.getUrl();
+        String oldFile = cfg.getFile(), oldName = cfg.getName(), oldUrl = cfg.getUrl(), oldFlags = cfg.getFlags();
         try {
             if (previous != null) {
                 surveillance.stopSource(previous);
@@ -303,17 +392,20 @@ public class SurveillanceEngine {
             cfg.setType(next.getType());
             cfg.setFile(next.getFile());
             cfg.setName(next.getName());
-            cfg.setUrl(null);
+            cfg.setUrl(next.getUrl());
+            cfg.setFlags(next.getFlags());
             liveFrames.clear();
             recognizedPeople.clear();
             identityByTrace.clear();
+            forgetSourceDetails();
             surveillance.startSource(replacement);
         } catch (RuntimeException failure) {
-            // A rejected/undecodable file must not strand the existing source.
+            // A rejected file or an unreachable camera must not strand the existing source.
             cfg.setType(oldType);
             cfg.setFile(oldFile);
             cfg.setName(oldName);
             cfg.setUrl(oldUrl);
+            cfg.setFlags(oldFlags);
             source = previous;
             try {
                 surveillance.stopSource(replacement);
@@ -334,23 +426,123 @@ public class SurveillanceEngine {
                 disconnectCamera(replacement);
                 liveFrames.clear();
                 recognizedPeople.clear();
+                forgetSourceDetails();
             }
             throw failure;
         }
         if (previous != null) disconnectCamera(previous);
-        log.info("Source switched to '{}'", cfg.getName());
+        log.info("Source switched to '{}' ({})", cfg.getName(), cfg.getType());
         return cfg.getName();
+    }
+
+    /**
+     * What the SDK knows about the attached camera, or null when no source is attached.
+     *
+     * <p>Cached, because this sits behind a dashboard poll - every browser watching asks
+     * twice a second - while what it returns (vendor, model, stream resolution) only changes
+     * when the source does. Each getter crosses into native code and hands back a Java wrapper
+     * around a native handle, so re-reading the device on every request would be work and
+     * garbage for an answer that is the same each time. {@link #forgetSourceDetails()} drops
+     * the cache whenever the source or its capture state changes.
+     */
+    public CameraDetails sourceDetails() {
+        CameraDetails cached = cachedDetails;
+        if (cached != null && System.currentTimeMillis() - cachedDetailsAt < DETAILS_CACHE_MILLIS) {
+            return cached;
+        }
+        NSurveillanceSource current;
+        synchronized (this) {
+            current = source;
+        }
+        if (current == null) {
+            return null;
+        }
+        try {
+            NCamera camera = current.getCamera();
+            CameraDetails fresh = camera == null ? null
+                    : SurveillanceSourceFactory.describe(camera, false);
+            cachedDetails = fresh;
+            cachedDetailsAt = System.currentTimeMillis();
+            return fresh;
+        } catch (Throwable t) {
+            log.debug("Could not read camera details: {}", t.toString());
+            return null;
+        }
+    }
+
+    /** Invalidates {@link #sourceDetails()} - the device behind it has changed. */
+    private void forgetSourceDetails() {
+        cachedDetails = null;
+        cachedDetailsAt = 0L;
+    }
+
+    /**
+     * Connects to a camera, reports what it is, and disconnects - without touching the
+     * running source.
+     *
+     * <p>Not {@code synchronized}: connecting to an unreachable camera can sit inside ffmpeg
+     * for many seconds, and holding the engine monitor that long would freeze the dashboard's
+     * start/stop buttons too. Probes are serialised against each other with their own lock
+     * instead, and run on their own thread so the HTTP request can give up without leaving the
+     * browser hanging - the probe still finishes and disconnects in the background.
+     *
+     * @param timeout how long to wait before giving up on the SDK
+     * @throws IllegalStateException if another probe is in progress, or this one timed out
+     */
+    public CameraDetails probeCamera(String name, String url, String flags, java.time.Duration timeout) {
+        NSurveillance engine;
+        synchronized (this) {
+            engine = surveillance;
+        }
+        if (engine == null) {
+            throw new IllegalStateException("Surveillance engine is not started");
+        }
+        SentiveillanceProperties.Source cfg = inheritedConfig();
+        cfg.setType(SentiveillanceProperties.Source.Type.IP_CAMERA);
+        cfg.setUrl(CameraUrls.parse(url).url());
+        cfg.setName(name == null || name.isBlank() ? "probe" : name.trim());
+        if (flags != null && !flags.isBlank()) {
+            cfg.setFlags(flags.trim());
+        }
+
+        if (!probeLock.tryLock()) {
+            throw new IllegalStateException("Another camera test is still running - try again in a moment");
+        }
+        try {
+            var future = probeExecutor.submit(() -> sourceFactory.probe(engine.getDeviceManager(), cfg));
+            try {
+                return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            } catch (java.util.concurrent.TimeoutException e) {
+                // The task owns its own cleanup, so abandoning it here is safe; it will
+                // disconnect whatever it eventually gets.
+                throw new IllegalStateException("Camera did not answer within "
+                        + timeout.toSeconds() + "s. Check the URL, the credentials and that"
+                        + " RTSP is enabled on the camera.");
+            } catch (java.util.concurrent.ExecutionException e) {
+                Throwable cause = e.getCause() == null ? e : e.getCause();
+                if (cause instanceof RuntimeException runtime) throw runtime;
+                if (cause instanceof Error error) throw error;
+                throw new IllegalStateException(cause.toString());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Camera test was interrupted");
+            }
+        } finally {
+            probeLock.unlock();
+        }
     }
 
     /** Starts the configured source if it is not already capturing. */
     public synchronized void startSource() {
         requireStarted();
         surveillance.startSource(source);
+        forgetSourceDetails();
     }
 
     public synchronized void stopSource() {
         requireStarted();
         surveillance.stopSource(source);
+        forgetSourceDetails();
     }
 
     @PreDestroy
@@ -375,6 +567,7 @@ public class SurveillanceEngine {
         } finally {
             eventExecutor.shutdown();
             snapshotExecutor.shutdown();
+            probeExecutor.shutdownNow();
             try {
                 eventExecutor.awaitTermination(10, TimeUnit.SECONDS);
                 snapshotExecutor.awaitTermination(10, TimeUnit.SECONDS);

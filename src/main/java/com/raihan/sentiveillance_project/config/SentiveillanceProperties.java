@@ -26,10 +26,6 @@ public class SentiveillanceProperties {
     private Enrollment enrollment = new Enrollment();
     private Snapshots snapshots = new Snapshots();
 
-    /**
-     * @author Md. Raihan Shikder (Raihan-89)
-     * @date 8 November, 2026
-     */
     @Getter
     @Setter
     public static class Sdk {
@@ -63,10 +59,6 @@ public class SentiveillanceProperties {
         private boolean useGpu = false;
     }
 
-    /**
-     * @author Md. Raihan Shikder (Raihan-89)
-     * @date 8 November, 2026
-     */
     @Getter
     @Setter
     public static class Source {
@@ -127,10 +119,6 @@ public class SentiveillanceProperties {
         private String uploadsDirectory = "var/uploads";
     }
 
-    /**
-     * @author Md. Raihan Shikder (Raihan-89)
-     * @date 8 November, 2026
-     */
     @Getter
     @Setter
     public static class Faces {
@@ -161,9 +149,6 @@ public class SentiveillanceProperties {
      * {@code detectorScaling=ONE}: no viewer attached, detection lag reached 3.5s; with a
      * viewer pulling frames every 80ms it reached 4.9s. The frame interval is therefore a
      * real tuning knob, not cosmetic.
-     *
-     * @author Md. Raihan Shikder (Raihan-89)
-     * @date 9 November, 2026
      */
     @Getter
     @Setter
@@ -195,9 +180,6 @@ public class SentiveillanceProperties {
      * it cannot be told to look for people only. So "humans only" is enforced in two places:
      * the vehicle attribute extractors below are left off, and every event whose object type
      * is not PERSON is dropped before it reaches the database or the dashboard.
-     *
-     * @author Md. Raihan Shikder (Raihan-89)
-     * @date 9 November, 2026
      */
     @Getter
     @Setter
@@ -265,10 +247,6 @@ public class SentiveillanceProperties {
         private boolean estimateAgeGroup = false;
     }
 
-    /**
-     * @author Md. Raihan Shikder (Raihan-89)
-     * @date 8 November, 2026
-     */
     @Getter
     @Setter
     public static class Enrollment {
@@ -298,10 +276,6 @@ public class SentiveillanceProperties {
         private boolean captureUnknownSubjects = true;
     }
 
-    /**
-     * @author Md. Raihan Shikder (Raihan-89)
-     * @date 8 November, 2026
-     */
     @Getter
     @Setter
     public static class Snapshots {

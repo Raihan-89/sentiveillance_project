@@ -1,6 +1,7 @@
 package com.raihan.sentiveillance_project.web;
 
 import com.raihan.sentiveillance_project.config.SentiveillanceProperties;
+import com.raihan.sentiveillance_project.sdk.CameraUrls;
 import com.raihan.sentiveillance_project.sdk.SurveillanceEngine;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -47,6 +48,33 @@ public class SourceController {
     public SourceController(SentiveillanceProperties properties, SurveillanceEngine engine) {
         this.properties = properties;
         this.engine = engine;
+    }
+
+    /**
+     * What the engine is looking at right now - whichever kind of source it is.
+     *
+     * <p>The dashboard needs one answer to "what is playing", and a video file and a camera
+     * describe themselves differently: a file has a path and a size, a camera has an address,
+     * a vendor and a negotiated stream format. Both are reported here, with the camera's
+     * password masked, alongside what the SDK says about the device it actually holds
+     * ({@code camera}) - which is how a camera that connected but never delivered a frame
+     * becomes visible instead of looking like a running source.
+     */
+    @GetMapping
+    public Map<String, Object> current() {
+        SentiveillanceProperties.Source cfg = properties.getSource();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("type", String.valueOf(cfg.getType()));
+        body.put("name", cfg.getName());
+        body.put("file", cfg.getFile());
+        body.put("url", CameraUrls.mask(cfg.getUrl()));
+        body.put("flags", cfg.getFlags());
+        body.put("detectPeople", cfg.isDetectPeople());
+        body.put("running", engine.isRunning());
+        body.put("camera", engine.sourceDetails());
+        // The recognition floor, so the page can say how big a head has to be on this stream.
+        body.put("minimalInterOcularDistance", properties.getFaces().getMinimalInterOcularDistance());
+        return body;
     }
 
     /** The video playing now, plus everything available to switch to. */

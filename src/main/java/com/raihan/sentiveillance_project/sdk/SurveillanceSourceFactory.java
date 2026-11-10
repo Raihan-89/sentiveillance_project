@@ -5,6 +5,8 @@ import com.neurotec.beans.NParameterDescriptor;
 import com.neurotec.devices.NCamera;
 import com.neurotec.devices.NDevice;
 import com.neurotec.devices.NDeviceManager;
+import com.neurotec.media.NMediaFormat;
+import com.neurotec.media.NVideoFormat;
 import com.neurotec.plugins.NPlugin;
 import com.neurotec.plugins.NPluginState;
 import com.neurotec.surveillance.NSurveillance;
@@ -89,8 +91,10 @@ public class SurveillanceSourceFactory {
                 if (cfg.getUrl() == null || cfg.getUrl().isBlank()) {
                     throw new IllegalStateException("sentiveillance.source.url must be set for type=IP_CAMERA");
                 }
-                bag.setProperty("Url", cfg.getUrl());
-                log.info("Connecting IP camera source: {}", maskCredentials(cfg.getUrl()));
+                // Checked here rather than at the plugin, which reports a bad URL as an
+                // opaque native error from inside ffmpeg.
+                bag.setProperty("Url", CameraUrls.parse(cfg.getUrl()).url());
+                log.info("Connecting IP camera source: {}", CameraUrls.mask(cfg.getUrl()));
             }
         }
 
@@ -116,8 +120,134 @@ public class SurveillanceSourceFactory {
         return file;
     }
 
-    /** Keeps the rtsp password out of the log. */
-    static String maskCredentials(String url) {
-        return url.replaceAll("://[^/@]*@", "://***:***@");
+    /**
+     * Connects to a camera, reads what the SDK knows about it, and disconnects again.
+     *
+     * <p>This is the "Test" button behind the dashboard: it exercises the exact code path the
+     * engine will use - same plugin, same {@code Url} parameter, same credentials - without
+     * disturbing the source that is currently attached. A device connected through
+     * {@code connectToDevice} is independent of {@link NSurveillance}'s source collection, so
+     * nothing here touches the running pipeline.
+     *
+     * <p>Always disconnects, including on failure: leaving the NdmMedia plugin holding a
+     * device is what makes native teardown abort the JVM later.
+     */
+    CameraDetails probe(NDeviceManager deviceManager, SentiveillanceProperties.Source cfg) {
+        NCamera camera = connect(deviceManager, cfg);
+        boolean started = false;
+        try {
+            // A network stream's format is only known once the plugin has actually read from
+            // it, so pull frames briefly. Without this almost every test would answer
+            // "connected, stream not negotiated yet", which says nothing about whether the
+            // camera is usable. Pattern from the SDK's own devices sample, which starts
+            // capture on a connected device in order to preview it.
+            if (!negotiated(camera)) {
+                try {
+                    camera.startCapturing();
+                    started = true;
+                    awaitFormat(camera);
+                } catch (Throwable t) {
+                    log.warn("Camera connected but would not start capturing: {}", t.toString());
+                }
+            }
+            return describe(camera, true);
+        } finally {
+            try {
+                if (started) {
+                    camera.stopCapturing();
+                }
+            } catch (Throwable t) {
+                log.warn("Could not stop the probed camera: {}", t.toString());
+            }
+            try {
+                if (camera.isDisconnectable()) {
+                    deviceManager.disconnectFromDevice(camera);
+                }
+            } catch (Throwable t) {
+                log.warn("Could not disconnect the probed camera: {}", t.toString());
+            }
+        }
+    }
+
+    /** Up to three seconds for the first frame to tell us the stream's shape. */
+    private static void awaitFormat(NCamera camera) {
+        for (int attempt = 0; attempt < 30 && !negotiated(camera); attempt++) {
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
+    private static boolean negotiated(NCamera camera) {
+        NMediaFormat format = quietly(camera::getCurrentFormat);
+        return format instanceof NVideoFormat video
+                && Boolean.TRUE.equals(quietly(() -> video.getWidth() > 0));
+    }
+
+    /**
+     * Reads identity and picture shape off a connected camera.
+     *
+     * <p>{@code getCurrentFormat()} is null until the stream has been negotiated, which on a
+     * network source happens when capture starts - so a camera that has been connected but
+     * never started reports its make and model with 0x0 as the frame size.
+     *
+     * <p>{@code withFormats} decides whether {@code getFormats()} is read as well. It is only
+     * asked for during a one-off test: every getter here allocates a Java wrapper around a
+     * native handle, and this method also sits behind a dashboard poll, where the goal is to
+     * touch as little of the device as possible.
+     *
+     * <p>Defensive throughout: every getter crosses into native code, and a plugin that has
+     * lost the stream throws rather than returning null.
+     */
+    static CameraDetails describe(NCamera camera, boolean withFormats) {
+        String deviceId = quietly(camera::getId);
+        String displayName = quietly(camera::getDisplayName);
+        String make = quietly(camera::getMake);
+        String model = quietly(camera::getModel);
+        String serial = quietly(camera::getSerialNumber);
+        boolean available = Boolean.TRUE.equals(quietly(camera::isAvailable));
+        boolean capturing = Boolean.TRUE.equals(quietly(camera::isCapturing));
+
+        int width = 0, height = 0, formatCount = 0;
+        Double frameRate = null;
+        String codec = null;
+        NMediaFormat current = quietly(camera::getCurrentFormat);
+        if (withFormats) {
+            NMediaFormat[] formats = quietly(camera::getFormats);
+            if (formats != null) {
+                formatCount = formats.length;
+                if (current == null && formats.length > 0) {
+                    current = formats[0];
+                }
+            }
+        }
+        if (current instanceof NVideoFormat video) {
+            Integer w = quietly(video::getWidth);
+            Integer h = quietly(video::getHeight);
+            width = w == null ? 0 : w;
+            height = h == null ? 0 : h;
+            var rate = quietly(video::getFrameRate);
+            if (rate != null && rate.denominator != 0) {
+                frameRate = Math.round(rate.numerator * 100.0 / rate.denominator) / 100.0;
+            }
+            Integer subtype = quietly(video::getMediaSubtype);
+            if (subtype != null) {
+                codec = quietly(() -> video.mediaSubtypeToString(subtype));
+            }
+        }
+        return new CameraDetails(deviceId, displayName, make, model, serial, available, capturing,
+                width, height, frameRate, codec, formatCount);
+    }
+
+    /** A detail nobody should lose a dashboard request over. */
+    private static <T> T quietly(java.util.function.Supplier<T> read) {
+        try {
+            return read.get();
+        } catch (Throwable t) {
+            return null;
+        }
     }
 }

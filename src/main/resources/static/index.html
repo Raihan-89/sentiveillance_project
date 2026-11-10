@@ -42,15 +42,71 @@
         <span class="key"><i class="swatch swatch-known"></i>identified</span>
         <span class="key"><i class="swatch swatch-unknown"></i>unknown</span>
         <span class="muted" id="frameInfo"></span>
+        <div class="seg" role="group" aria-label="Kind of source">
+          <button class="seg-btn is-active" id="tabVideo" type="button">Video file</button>
+          <button class="seg-btn" id="tabCamera" type="button">IP camera</button>
+        </div>
+      </div>
+    </div>
+    <div class="source-bar">
+      <div class="source-row" id="paneVideo">
         <label class="btn btn-ghost btn-sm" for="videoFile" title="Pick a video from this computer">Choose video
           <input type="file" id="videoFile" accept="video/*,.mp4,.avi,.mkv,.mov,.m4v,.mpg,.mpeg,.wmv,.flv,.webm,.ts" hidden>
         </label>
         <select class="picker" id="videoPicker" aria-label="Previously uploaded videos" title="Videos already uploaded"></select>
       </div>
-    </div>
-    <div class="source-bar">
+      <div class="source-row" id="paneCamera" hidden>
+        <select class="picker picker-wide" id="cameraPicker" aria-label="Saved IP cameras"></select>
+        <button class="btn btn-sm" id="cameraUseBtn" type="button" title="Make this camera the live source">Use</button>
+        <button class="btn btn-ghost btn-sm" id="cameraTestBtn" type="button" title="Connect, report what the camera is, disconnect - the live source is untouched">Test</button>
+        <button class="btn btn-ghost btn-sm" id="cameraDeleteBtn" type="button">Remove</button>
+        <button class="btn btn-ghost btn-sm" id="cameraAddBtn" type="button">Add camera&hellip;</button>
+      </div>
       <span id="sourceStatus" class="muted" role="status" aria-live="polite">&nbsp;</span>
     </div>
+    <form class="camera-form" id="cameraForm" hidden autocomplete="off">
+      <div class="field field-wide">
+        <label for="camUrl">RTSP / HTTP URL</label>
+        <input id="camUrl" type="text" spellcheck="false"
+               placeholder="rtsp://user:pass@192.168.1.108:554/cam/realmonitor?channel=1&amp;subtype=0">
+      </div>
+      <div class="field">
+        <label for="camName">Name</label>
+        <input id="camName" type="text" placeholder="gate-camera">
+      </div>
+      <p class="form-hint">
+        Leave the URL empty to build a Dahua URL from the parts below. A password containing
+        <code>@</code> or <code>:</code> is percent-encoded for you.
+      </p>
+      <div class="field"><label for="camHost">Host or IP</label><input id="camHost" type="text" placeholder="192.168.1.108"></div>
+      <div class="field"><label for="camPort">RTSP port</label><input id="camPort" type="number" min="1" max="65535" value="554"></div>
+      <div class="field"><label for="camUser">User</label><input id="camUser" type="text" autocomplete="off"></div>
+      <div class="field"><label for="camPass">Password</label><input id="camPass" type="password" autocomplete="new-password"></div>
+      <div class="field"><label for="camChannel">Channel</label><input id="camChannel" type="number" min="1" value="1"></div>
+      <div class="field">
+        <label for="camSubtype">Stream</label>
+        <select id="camSubtype">
+          <option value="0">0 &mdash; main stream</option>
+          <option value="1">1 &mdash; sub stream</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="camFlags" title="Which backend the SDK's Media plugin uses to decode">Decoder</label>
+        <select id="camFlags">
+          <option value="">SDK default</option>
+          <option value="DoNotUseVlc">Force FFmpeg</option>
+          <option value="DoNotUseFFmpeg">Force VLC</option>
+          <option value="PreferVlc">Prefer VLC</option>
+        </select>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-ghost btn-sm" id="camTestBtn" type="button">Test</button>
+        <button class="btn btn-ghost btn-sm" id="camSaveBtn" type="button">Save</button>
+        <button class="btn btn-sm" id="camSaveUseBtn" type="button">Save &amp; use</button>
+        <button class="btn btn-ghost btn-sm" id="camCancelBtn" type="button">Cancel</button>
+        <span class="muted" id="cameraFormStatus" role="status" aria-live="polite"></span>
+      </div>
+    </form>
     <div class="stage" id="stage">
       <img id="video" alt="Live camera feed with detection boxes">
       <div class="stage-empty" id="stageEmpty">
@@ -61,6 +117,10 @@
   </section>
 
   <div class="live-sidebar">
+    <section class="panel">
+      <div class="panel-head"><h2>Source</h2><span class="muted" id="sourceKind">&mdash;</span></div>
+      <dl class="details" id="sourceDetails"></dl>
+    </section>
     <section class="panel">
       <div class="panel-head"><h2>Recognized people</h2><span class="muted" id="recognizedState">recent matches</span></div>
       <div class="recognized-list" id="recognizedPeople">
