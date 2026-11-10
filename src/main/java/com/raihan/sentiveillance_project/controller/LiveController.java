@@ -1,9 +1,9 @@
-package com.raihan.sentiveillance_project.web;
+package com.raihan.sentiveillance_project.controller;
 
 import com.raihan.sentiveillance_project.config.SentiveillanceProperties;
 import com.raihan.sentiveillance_project.live.LiveEventStream;
-import com.raihan.sentiveillance_project.live.LiveFrameService;
-import com.raihan.sentiveillance_project.live.RecognizedPeopleService;
+import com.raihan.sentiveillance_project.service.LiveFrameService;
+import com.raihan.sentiveillance_project.service.RecognizedPeopleService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;

@@ -10,10 +10,6 @@ import java.time.Instant;
 /**
  * One enrolled person plus the face template the surveillance engine matches against.
  *
- * <p>{@code templateId} is the string handed to {@code NSurveillance.addTemplate(id, bytes)};
- * it is what comes back in {@code NSEDMatchResult.getId()}, so it is the join key between
- * the SDK's watch list and this table.
- *
  * @author Md. Raihan Shikder (Raihan-89)
  * @date 8 November, 2026
  */

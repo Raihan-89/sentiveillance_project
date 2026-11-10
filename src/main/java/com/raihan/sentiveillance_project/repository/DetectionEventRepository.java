@@ -1,5 +1,6 @@
-package com.raihan.sentiveillance_project.domain;
+package com.raihan.sentiveillance_project.repository;
 
+import com.raihan.sentiveillance_project.domain.DetectionEvent;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;

@@ -11,13 +11,6 @@ import java.time.Instant;
  * A person the engine saw and tracked but could not identify, held so they can be named and
  * enrolled without ever taking a photograph.
  *
- * <p>A usable live template queues the person while visible. Pending templates are matched
- * across visits, and a better face-quality score updates the existing image and template
- * together. Disappearance provides one last capture attempt if early extraction fails.
- *
- * <p>Not {@code @Lob} - see {@link Employee#getFaceTemplate()} for why that mapping breaks on
- * PostgreSQL.
- *
  * @author Md. Raihan Shikder (Raihan-89)
  * @date 9 November, 2026
  */

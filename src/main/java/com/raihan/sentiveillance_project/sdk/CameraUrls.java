@@ -1,5 +1,7 @@
 package com.raihan.sentiveillance_project.sdk;
 
+import com.raihan.sentiveillance_project.records.Parsed;
+
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -7,28 +9,12 @@ import java.util.regex.Pattern;
  * Everything the project needs to do with a camera URL that does not involve the SDK:
  * check it, split it, hide the password in it, and build one for a Dahua.
  *
- * <p>Kept as plain static functions with no SDK types, because this is the part worth
- * unit-testing - the {@code Url} string handed to the Media device plugin is the whole
- * difference between an IP camera source and a video-file source, and a typo in it surfaces
- * as an opaque native error much later.
- *
- * <p>Parsed with a regex rather than {@link java.net.URI} on purpose: RTSP URLs routinely
- * carry a password with {@code @}, {@code /} or {@code #} in it, which makes {@code URI}
- * throw where a camera is perfectly happy.
- *
  * @author Md. Raihan Shikder (Raihan-89)
  * @date 10 November, 2026
  */
 public final class CameraUrls {
 
-    /**
-     * scheme://[userinfo@]host[:port][/rest] - deliberately lenient about userinfo.
-     *
-     * <p>The userinfo group is greedy and only stops at {@code / ? #}, so the host is read
-     * from the <em>last</em> {@code @} before the path. That is what lets a camera password
-     * containing an {@code @} through: with a non-greedy or {@code @}-excluding group,
-     * {@code rtsp://svc:pa@ss@host/cam} parses its host as "ss".
-     */
+    /** scheme://[userinfo@]host[:port][/rest] - deliberately lenient about userinfo. */
     private static final Pattern URL = Pattern.compile(
             "^(?<scheme>[a-zA-Z][a-zA-Z0-9+.\\-]*)://(?:(?<userinfo>[^/?#]*)@)?"
                     + "(?<host>\\[[^\\]]+]|[^:/?#@]+)(?::(?<port>\\d{1,5}))?(?<rest>[/?#].*)?$");
@@ -40,32 +26,38 @@ public final class CameraUrls {
     private CameraUrls() {
     }
 
-    /**
-     * @throws IllegalArgumentException with a message meant for the dashboard
-     */
     public static Parsed parse(String url) {
         if (url == null || url.isBlank()) {
             throw new IllegalArgumentException("Camera URL is required");
         }
+
         String trimmed = url.trim();
         Matcher m = URL.matcher(trimmed);
+
         if (!m.matches()) {
             throw new IllegalArgumentException(
                     "Not a camera URL. Expected something like "
                             + "rtsp://user:pass@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0");
         }
+
         String scheme = m.group("scheme").toLowerCase(java.util.Locale.ROOT);
+
         if (!SCHEMES.contains(scheme)) {
             throw new IllegalArgumentException("Unsupported scheme '" + scheme + "'. Use one of " + SCHEMES);
         }
+
         String host = m.group("host");
+
         if (host.isBlank()) {
             throw new IllegalArgumentException("Camera URL has no host");
         }
+
         int port = m.group("port") == null ? defaultPort(scheme) : Integer.parseInt(m.group("port"));
+
         if (port < 1 || port > 65535) {
             throw new IllegalArgumentException("Port out of range: " + port);
         }
+
         return new Parsed(trimmed, scheme, host.replace("[", "").replace("]", ""), port);
     }
 
@@ -78,13 +70,7 @@ public final class CameraUrls {
         };
     }
 
-    /**
-     * Keeps the camera password out of logs, the API and the browser.
-     *
-     * <p>Greedy up to the last {@code @}, for the same reason the pattern above is: a password
-     * with an {@code @} in it would otherwise be masked only as far as its first one, leaving
-     * the rest of it in the log.
-     */
+    /** Keeps the camera password out of logs, the API and the browser. */
     public static String mask(String url) {
         return url == null ? null : url.replaceAll("://[^/?#]*@", "://***:***@");
     }
@@ -130,17 +116,5 @@ public final class CameraUrls {
             }
         }
         return out.toString();
-    }
-
-    /**
-     * @param url      the URL as it should be handed to the SDK
-     * @param scheme   lower-cased scheme
-     * @param host     host name or IP, brackets stripped from IPv6
-     * @param port     explicit port, or the default for the scheme
-     *
-     * @author Md. Raihan Shikder (Raihan-89)
-     * @date 10 November, 2026
-     */
-    public record Parsed(String url, String scheme, String host, int port) {
     }
 }

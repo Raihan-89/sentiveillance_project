@@ -1,6 +1,6 @@
 package com.raihan.sentiveillance_project.live;
 
-import com.raihan.sentiveillance_project.detection.SubjectEventSnapshot;
+import com.raihan.sentiveillance_project.records.SubjectEventSnapshot;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -49,10 +49,6 @@ public class LiveEventStream {
         return emitters.size();
     }
 
-    /**
-     * @param snapshot     the event as recorded
-     * @param employeeName resolved watch-list name, or {@code null} when unidentified
-     */
     public void publish(SubjectEventSnapshot snapshot, String employeeName) {
         if (emitters.isEmpty()) {
             return;
@@ -100,6 +96,7 @@ public class LiveEventStream {
         m.put("snapshot", s.snapshotPath() == null
                 ? null
                 : Path.of(s.snapshotPath()).getFileName().toString());
+
         return m;
     }
 }

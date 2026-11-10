@@ -1,9 +1,9 @@
-package com.raihan.sentiveillance_project.enrollment;
+package com.raihan.sentiveillance_project.service;
 
 import com.raihan.sentiveillance_project.domain.Employee;
-import com.raihan.sentiveillance_project.domain.EmployeeRepository;
+import com.raihan.sentiveillance_project.repository.EmployeeRepository;
 import com.raihan.sentiveillance_project.domain.UnknownSubject;
-import com.raihan.sentiveillance_project.domain.UnknownSubjectRepository;
+import com.raihan.sentiveillance_project.repository.UnknownSubjectRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,10 +12,6 @@ import java.util.function.BiConsumer;
 
 /**
  * Turns a person the camera saw into an enrolled employee, with no photograph involved.
- *
- * <p>The template was captured live by the surveillance engine, so enrolling is just a matter
- * of giving it a name and pushing it into the running watch list - which is why identification
- * starts working on the person's very next appearance rather than after a restart.
  *
  * @author Md. Raihan Shikder (Raihan-89)
  * @date 9 November, 2026
@@ -47,8 +43,10 @@ public class VideoEnrollmentService {
         if (fullName == null || fullName.isBlank()) {
             throw new IllegalArgumentException("A name is required");
         }
+
         UnknownSubject subject = unknownSubjects.lockById(unknownId)
                 .orElseThrow(() -> new IllegalArgumentException("No unknown subject " + unknownId));
+
         if (subject.getEnrolledEmployeeId() != null) {
             throw new IllegalStateException("Already enrolled as employee " + subject.getEnrolledEmployeeId());
         }
@@ -56,6 +54,7 @@ public class VideoEnrollmentService {
         // Allocate the next free number, then skip any template id already taken - rows can be
         // deleted by hand, so max+1 is not automatically free.
         int employeeNo = java.util.Objects.requireNonNullElse(employees.findMaxEmployeeNo(), 0) + 1;
+
         while (employees.existsByTemplateId("EMP-" + employeeNo)) {
             employeeNo++;
         }
@@ -79,6 +78,7 @@ public class VideoEnrollmentService {
         log.info("Enrolled {} as {} from a live capture (trace {} on {}, {} byte template)",
                 saved.getFullName(), saved.getTemplateId(), subject.getTraceIndex(),
                 subject.getSourceName(), saved.getFaceTemplate().length);
+
         return saved;
     }
 

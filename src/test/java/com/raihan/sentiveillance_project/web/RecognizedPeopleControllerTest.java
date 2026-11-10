@@ -1,7 +1,8 @@
 package com.raihan.sentiveillance_project.web;
 
 import com.raihan.sentiveillance_project.config.SentiveillanceProperties;
-import com.raihan.sentiveillance_project.live.RecognizedPeopleService;
+import com.raihan.sentiveillance_project.controller.LiveController;
+import com.raihan.sentiveillance_project.service.RecognizedPeopleService;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 

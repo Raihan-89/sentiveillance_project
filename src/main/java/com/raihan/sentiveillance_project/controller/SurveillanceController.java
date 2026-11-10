@@ -1,10 +1,11 @@
-package com.raihan.sentiveillance_project.web;
+package com.raihan.sentiveillance_project.controller;
 
 import com.raihan.sentiveillance_project.domain.DetectionEvent;
-import com.raihan.sentiveillance_project.domain.DetectionEventRepository;
+import com.raihan.sentiveillance_project.records.Stats;
+import com.raihan.sentiveillance_project.repository.DetectionEventRepository;
 import com.raihan.sentiveillance_project.domain.Employee;
-import com.raihan.sentiveillance_project.domain.EmployeeRepository;
-import com.raihan.sentiveillance_project.domain.UnknownSubjectRepository;
+import com.raihan.sentiveillance_project.repository.EmployeeRepository;
+import com.raihan.sentiveillance_project.repository.UnknownSubjectRepository;
 import com.raihan.sentiveillance_project.sdk.SurveillanceEngine;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.web.bind.annotation.*;
@@ -39,7 +40,8 @@ public class SurveillanceController {
 
     @GetMapping("/status")
     public Map<String, Object> status() {
-        SurveillanceEngine.Stats stats = engine.stats();
+        Stats stats = engine.stats();
+
         // LinkedHashMap, not Map.of: that caps out at ten pairs and this is already there.
         return mapOf(
                 "running", stats.running(),
@@ -57,6 +59,7 @@ public class SurveillanceController {
     /** Ordered map from alternating key/value pairs, with no ten-entry ceiling. */
     private static Map<String, Object> mapOf(Object... keysAndValues) {
         Map<String, Object> map = new java.util.LinkedHashMap<>();
+
         for (int i = 0; i + 1 < keysAndValues.length; i += 2) {
             map.put((String) keysAndValues[i], keysAndValues[i + 1]);
         }
@@ -107,6 +110,7 @@ public class SurveillanceController {
         map.put("matchScore", e.getMatchScore());
         map.put("employee", employee == null ? null : employee.getFullName());
         map.put("snapshotPath", e.getSnapshotPath());
+
         return map;
     }
 }

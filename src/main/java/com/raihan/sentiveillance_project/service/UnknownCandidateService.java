@@ -1,7 +1,7 @@
-package com.raihan.sentiveillance_project.enrollment;
+package com.raihan.sentiveillance_project.service;
 
 import com.raihan.sentiveillance_project.domain.UnknownSubject;
-import com.raihan.sentiveillance_project.domain.UnknownSubjectRepository;
+import com.raihan.sentiveillance_project.repository.UnknownSubjectRepository;
 import com.raihan.sentiveillance_project.config.SentiveillanceProperties;
 import com.raihan.sentiveillance_project.live.LiveEventStream;
 import lombok.extern.slf4j.Slf4j;
@@ -44,8 +44,10 @@ public class UnknownCandidateService {
         Long canonicalId = canonicalId(previousId);
         UnknownSubject previous = canonicalId == null ? null : pending.stream()
                 .filter(s -> canonicalId.equals(s.getId())).findFirst().orElse(null);
+
         // A named or dismissed candidate must not be resurrected by an in-flight frame.
         if (previousId != null && previous == null) return null;
+
         if (previous != null) {
             // The tracker already established identity for this visit. Improvements need
             // no new face comparisons against the rest of the queue.
@@ -55,55 +57,72 @@ public class UnknownCandidateService {
                 if (matcher.matches(template, candidate.getFaceTemplate())) samePerson.add(candidate);
             }
         }
+
         boolean created = samePerson.isEmpty();
         UnknownSubject target = created ? new UnknownSubject() : samePerson.getFirst();
+
         // Keep the oldest card/id so typed names survive better captures and duplicate merges.
         for (UnknownSubject duplicate : samePerson) {
             if (duplicate == target) continue;
+
             if (qualityOf(duplicate) > qualityOf(target)) {
                 target.setFaceQuality(duplicate.getFaceQuality());
                 target.setFaceTemplate(duplicate.getFaceTemplate());
                 target.setSnapshotName(duplicate.getSnapshotName());
             }
+
             repository.delete(duplicate);
             afterCommit(() -> mergedIds.put(duplicate.getId(), target.getId()));
         }
+
         boolean better = created || quality > qualityOf(target);
+
         if (better) {
             Path dir = Path.of(properties.getSnapshots().getDirectory()).toAbsolutePath().normalize();
             Files.createDirectories(dir);
             Path snapshot = Files.createTempFile(dir, "queue_face_", ".jpg");
+
             try {
                 Files.write(snapshot, jpeg);
             } catch (IOException e) {
                 Files.deleteIfExists(snapshot);
                 throw e;
             }
+
             if (TransactionSynchronizationManager.isSynchronizationActive()) {
                 TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                     @Override public void afterCompletion(int status) {
                         if (status != STATUS_COMMITTED) {
-                            try { Files.deleteIfExists(snapshot); }
-                            catch (IOException e) { log.debug("Could not remove rolled-back candidate snapshot", e); }
+                            try {
+                                Files.deleteIfExists(snapshot);
+                            }
+                            catch (IOException e) {
+                                log.debug("Could not remove rolled-back candidate snapshot", e);
+                            }
                         }
                     }
                 });
             }
+
             target.setSourceName(source);
             target.setTraceIndex(trace);
             target.setSeenAt(Instant.now());
             target.setFaceTemplate(template);
             target.setSnapshotName(snapshot.getFileName().toString());
             target.setFaceQuality(quality < 0 ? null : quality);
+
             repository.save(target);
         }
+
         if (better || samePerson.size() > 1) notifyAfterCommit();
+
         return new Result(target.getId(), qualityOf(target), created);
     }
 
     @Transactional
     public void removeIfPending(long id) {
         repository.lockById(canonicalId(id)).ifPresent(candidate -> {
+
             if (candidate.getEnrolledEmployeeId() == null) {
                 repository.delete(candidate);
                 notifyAfterCommit();
@@ -117,6 +136,7 @@ public class UnknownCandidateService {
 
     private Long canonicalId(Long id) {
         while (id != null && mergedIds.containsKey(id)) id = mergedIds.get(id);
+
         return id;
     }
 

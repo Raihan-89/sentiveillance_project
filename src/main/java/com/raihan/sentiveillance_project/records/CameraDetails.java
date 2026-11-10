@@ -1,15 +1,8 @@
-package com.raihan.sentiveillance_project.sdk;
+package com.raihan.sentiveillance_project.records;
 
 /**
  * What the SDK can tell us about a connected camera, flattened into plain Java so it can be
  * serialised to the dashboard and kept in the database.
- *
- * <p>Everything here comes off the {@code NCamera} the Media device plugin returns:
- * identity from {@link com.neurotec.devices.NDevice} ({@code getId}, {@code getMake},
- * {@code getModel}), and the picture shape from
- * {@link com.neurotec.devices.NCaptureDevice#getCurrentFormat()} cast to
- * {@link com.neurotec.media.NVideoFormat}. {@code format} is null until the plugin has
- * negotiated the stream, which is why every field here is nullable rather than zeroed.
  *
  * @param deviceId     the plugin's own id for the device (NdmMedia gives a URL-derived id)
  * @param displayName  the name we asked for via the {@code DisplayName} parameter

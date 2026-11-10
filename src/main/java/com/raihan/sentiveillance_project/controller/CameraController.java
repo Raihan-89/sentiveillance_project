@@ -1,9 +1,10 @@
-package com.raihan.sentiveillance_project.web;
+package com.raihan.sentiveillance_project.controller;
 
-import com.raihan.sentiveillance_project.camera.CameraForm;
-import com.raihan.sentiveillance_project.camera.CameraService;
+import com.raihan.sentiveillance_project.records.CameraForm;
+import com.raihan.sentiveillance_project.service.CameraService;
 import com.raihan.sentiveillance_project.domain.Camera;
-import com.raihan.sentiveillance_project.sdk.CameraDetails;
+import com.raihan.sentiveillance_project.records.CameraView;
+import com.raihan.sentiveillance_project.records.CameraDetails;
 import com.raihan.sentiveillance_project.sdk.CameraUrls;
 import com.raihan.sentiveillance_project.sdk.SurveillanceEngine;
 import lombok.extern.slf4j.Slf4j;
@@ -46,8 +47,8 @@ public class CameraController {
         var all = cameras.list();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("cameras", all);
-        body.put("activeId", all.stream().filter(CameraService.CameraView::active)
-                .map(CameraService.CameraView::id).findFirst().orElse(null));
+        body.put("activeId", all.stream().filter(CameraView::active)
+                .map(CameraView::id).findFirst().orElse(null));
         return body;
     }
 

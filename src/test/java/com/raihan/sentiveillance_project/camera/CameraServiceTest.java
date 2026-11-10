@@ -2,8 +2,12 @@ package com.raihan.sentiveillance_project.camera;
 
 import com.raihan.sentiveillance_project.config.SentiveillanceProperties;
 import com.raihan.sentiveillance_project.domain.Camera;
-import com.raihan.sentiveillance_project.domain.CameraRepository;
+import com.raihan.sentiveillance_project.enums.SourceType;
+import com.raihan.sentiveillance_project.records.CameraForm;
+import com.raihan.sentiveillance_project.repository.CameraRepository;
+import com.raihan.sentiveillance_project.records.CameraView;
 import com.raihan.sentiveillance_project.sdk.SurveillanceEngine;
+import com.raihan.sentiveillance_project.service.CameraService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -119,35 +123,35 @@ class CameraServiceTest {
         Camera gate = service.save(form("gate", URL));
         service.save(form("lobby", "rtsp://svc:secret@192.168.1.109:554/cam"));
 
-        properties.getSource().setType(SentiveillanceProperties.Source.Type.IP_CAMERA);
+        properties.getSource().setType(SourceType.IP_CAMERA);
         properties.getSource().setUrl(URL);
 
         var views = service.list();
         assertTrue(views.stream().filter(v -> v.id().equals(gate.getId())).allMatch(v -> v.active()));
-        assertEquals(1, views.stream().filter(CameraService.CameraView::active).count());
+        assertEquals(1, views.stream().filter(CameraView::active).count());
 
         // Back on a video file, nothing is the live camera.
-        properties.getSource().setType(SentiveillanceProperties.Source.Type.VIDEO_FILE);
-        assertEquals(0, service.list().stream().filter(CameraService.CameraView::active).count());
+        properties.getSource().setType(SourceType.VIDEO_FILE);
+        assertEquals(0, service.list().stream().filter(CameraView::active).count());
     }
 
     @Test
     void willNotDeleteTheCameraThatIsLive() {
         Camera gate = service.save(form("gate", URL));
-        properties.getSource().setType(SentiveillanceProperties.Source.Type.IP_CAMERA);
+        properties.getSource().setType(SourceType.IP_CAMERA);
         properties.getSource().setUrl(URL);
 
         assertThrows(IllegalStateException.class, () -> service.delete(gate.getId()));
         verify(repository, never()).delete(any());
 
-        properties.getSource().setType(SentiveillanceProperties.Source.Type.VIDEO_FILE);
+        properties.getSource().setType(SourceType.VIDEO_FILE);
         service.delete(gate.getId());
         verify(repository).delete(gate);
     }
 
     @Test
     void registersTheConfiguredCameraOnceSoItStaysSelectable() {
-        properties.getSource().setType(SentiveillanceProperties.Source.Type.IP_CAMERA);
+        properties.getSource().setType(SourceType.IP_CAMERA);
         properties.getSource().setName("gate-camera");
         properties.getSource().setUrl(URL);
 
@@ -161,11 +165,11 @@ class CameraServiceTest {
 
     @Test
     void ignoresTheConfiguredSourceWhenItIsAFileOrUnusable() {
-        properties.getSource().setType(SentiveillanceProperties.Source.Type.VIDEO_FILE);
+        properties.getSource().setType(SourceType.VIDEO_FILE);
         properties.getSource().setFile("my_files/clip.mp4");
         service.importConfiguredCamera();
 
-        properties.getSource().setType(SentiveillanceProperties.Source.Type.IP_CAMERA);
+        properties.getSource().setType(SourceType.IP_CAMERA);
         properties.getSource().setUrl("not a url");
         service.importConfiguredCamera();
 

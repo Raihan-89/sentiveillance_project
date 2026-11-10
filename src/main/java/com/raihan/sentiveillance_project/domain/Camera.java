@@ -10,22 +10,6 @@ import java.time.Instant;
 /**
  * One IP camera the dashboard knows how to switch to.
  *
- * <p>Why a table at all, when {@code sentiveillance.source.url} already exists: that property
- * is read once at boot and describes a single source, so changing cameras meant editing a file
- * and restarting - and switching to a video file erased the URL for the rest of the process.
- * Keeping cameras here makes them selectable at runtime and survives a restart, which is also
- * how the SDK's own Java web sample does it ({@code SourceEntity}: id, display name, url,
- * flags).
- *
- * <p>The last-seen columns are a convenience, not state the pipeline depends on: they let the
- * dashboard show what a camera was when it last answered, before anything is connected.
- *
- * <p><b>The URL holds the camera password in plain text</b>, exactly as
- * {@code application.properties} does. It is never sent to the browser unmasked (see
- * {@link com.raihan.sentiveillance_project.sdk.CameraUrls#mask}), but anybody who can read the
- * database can read the camera credentials - so give the app a dedicated, read-only camera
- * account rather than the camera's admin login.
- *
  * @author Md. Raihan Shikder (Raihan-89)
  * @date 10 November, 2026
  */

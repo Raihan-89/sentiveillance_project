@@ -1,18 +1,15 @@
 package com.raihan.sentiveillance_project.detection;
 
 import com.raihan.sentiveillance_project.domain.DetectionEvent;
-import com.raihan.sentiveillance_project.domain.DetectionEventRepository;
+import com.raihan.sentiveillance_project.records.SubjectEventSnapshot;
+import com.raihan.sentiveillance_project.repository.DetectionEventRepository;
 import com.raihan.sentiveillance_project.domain.Employee;
-import com.raihan.sentiveillance_project.domain.EmployeeRepository;
+import com.raihan.sentiveillance_project.repository.EmployeeRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Writes {@link SubjectEventSnapshot}s to PostgreSQL and logs them readably.
- *
- * <p>Runs on the engine's own executor, never on an SDK callback thread.
- *
  * @author Md. Raihan Shikder (Raihan-89)
  * @date 8 November, 2026
  */
@@ -23,10 +20,7 @@ public class DetectionRecorder {
     private final DetectionEventRepository detectionEvents;
     private final EmployeeRepository employees;
 
-    /**
-     * Persistence only. The dashboard is fed straight from the SDK callback in
-     * {@code SurveillanceEngine}, so the overlay never waits on a database insert.
-     */
+    /** Persistence only. The dashboard is fed straight from the SDK callback in */
     public DetectionRecorder(DetectionEventRepository detectionEvents, EmployeeRepository employees) {
         this.detectionEvents = detectionEvents;
         this.employees = employees;

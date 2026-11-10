@@ -15,15 +15,22 @@ import com.neurotec.surveillance.NSurveillanceObjectTypeDetails;
 import com.neurotec.surveillance.NSurveillanceSource;
 import com.raihan.sentiveillance_project.config.SentiveillanceProperties;
 import com.raihan.sentiveillance_project.detection.DetectionRecorder;
-import com.raihan.sentiveillance_project.detection.SubjectEventSnapshot;
+import com.raihan.sentiveillance_project.records.CameraDetails;
+import com.raihan.sentiveillance_project.records.Stats;
+import com.raihan.sentiveillance_project.records.SubjectEventSnapshot;
 import com.raihan.sentiveillance_project.domain.Employee;
-import com.raihan.sentiveillance_project.enrollment.UnknownCandidateService;
-import com.raihan.sentiveillance_project.enrollment.CandidateFaceMatcher;
+import com.raihan.sentiveillance_project.service.UnknownCandidateService;
+import com.raihan.sentiveillance_project.service.CandidateFaceMatcher;
+import com.raihan.sentiveillance_project.enums.SourceType;
 import com.raihan.sentiveillance_project.live.LiveEventStream;
-import com.raihan.sentiveillance_project.live.LiveFrameService;
-import com.raihan.sentiveillance_project.live.RecognizedPeopleService;
+import com.raihan.sentiveillance_project.service.LiveFrameService;
+import com.raihan.sentiveillance_project.service.RecognizedPeopleService;
+import com.raihan.sentiveillance_project.model.Faces;
+import com.raihan.sentiveillance_project.model.People;
+import com.raihan.sentiveillance_project.model.Source;
 import jakarta.annotation.PreDestroy;
 import lombok.Getter;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -39,28 +46,6 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Owns the one {@link NSurveillance} instance and the one source attached to it.
- *
- * <h2>What the SDK objects do</h2>
- * <ul>
- *   <li>{@code NSurveillance} is the engine. It holds the loaded neural-network models, the
- *       watch list of face templates, the detection thresholds, and the worker threads.
- *       Creating it is expensive (models are read from {@code Bin/Data}), so there is exactly
- *       one per process - and it is why 20-30 cameras later will still share a single engine.</li>
- *   <li>{@code NSurveillance.Sources} is the list of inputs. Each {@link NSurveillanceSource}
- *       wraps one camera/file and carries its own modality set, region of interest and
- *       search areas. Sources start and stop independently of each other.</li>
- *   <li><b>Templates</b> are added with {@code addTemplate(id, bytes)}. The engine matches
- *       every tracked face against all of them continuously and reports the best hits.</li>
- *   <li><b>Events</b> are callbacks, not polling. The interesting ones are
- *       {@code SUBJECT_APPEARED} (a new person entered the frame),
- *       {@code SUBJECT_TRACK} (a periodic update as they move, where recognition scores
- *       accumulate and improve), and {@code SUBJECT_DISAPPEARED} (they left - this carries
- *       the best face template collected across the whole visit). All three share a
- *       {@code traceIndex}, which is the SDK's identity for one visit.</li>
- *   <li><b>Thresholds</b> decide what gets reported: {@code matchingThreshold} is the score
- *       a face must reach to be called a known employee, while quality and inter-ocular
- *       distance decide whether a frame is even worth extracting a template from.</li>
- * </ul>
  *
  * @author Md. Raihan Shikder (Raihan-89)
  * @date 8 November, 2026
@@ -124,11 +109,13 @@ public class SurveillanceEngine {
                 t.setDaemon(true);
                 return t;
             });
+
     private final java.util.concurrent.locks.ReentrantLock probeLock =
             new java.util.concurrent.locks.ReentrantLock();
 
     /** How long {@link #sourceDetails()} may serve the device description it last read. */
     private static final long DETAILS_CACHE_MILLIS = 10_000;
+
     /**
      * {@code sentiveillance.source.flags} as configured at boot.
      *
@@ -164,25 +151,10 @@ public class SurveillanceEngine {
     /**
      * Templates currently in the engine's watch list, counted here rather than asked of the
      * SDK.
-     *
-     * <p>{@code NSurveillance.getTemplateIds()} cannot be called on an empty watch list: the
-     * binding reads a string array out of a zero-length block and throws
-     * {@code IndexOutOfBoundsException: Bounds exceeds available space : size=0, offset=8}
-     * from inside JNA. It only surfaces once the employee table is empty - with even one
-     * template enrolled the call works - so it stayed hidden until the tables were dropped.
-     * Every /api/status poll hit it, which is twice a second with the dashboard open.
      */
     private final java.util.concurrent.atomic.AtomicInteger watchListSize =
             new java.util.concurrent.atomic.AtomicInteger();
-    /**
-     * traceIndex -> the watch-list id matched at any point during that visit.
-     *
-     * <p>Needed because recognition and the end of a track are reported separately: matches
-     * arrive on SUBJECT_TRACK events, while SUBJECT_DISAPPEARED carries no {@code bestMatches}
-     * at all. Judging identity from the disappear event alone therefore calls every visit
-     * unidentified - which both left {@code identified} stuck at zero and queued known people
-     * for naming. The entry is removed when the track ends.
-     */
+    /** traceIndex -> the watch-list id matched at any point during that visit. */
     private final java.util.Map<Integer, String> identityByTrace = new java.util.concurrent.ConcurrentHashMap<>();
     /**
      * templateId -> employee name, built from the watch list at start. Lets the live push name
@@ -235,6 +207,7 @@ public class SurveillanceEngine {
 
         log.info("Creating NSurveillance (loading models from {}/Bin/Data) ...", properties.getSdk().getRoot());
         surveillance = new NSurveillance();
+
         try {
             applySettings(surveillance);
             loadWatchList(watchList);
@@ -269,6 +242,7 @@ public class SurveillanceEngine {
             if (subscribed) {
                 unsubscribe();
             }
+
             if (source != null) {
                 surveillance.getSources().remove(source);
                 disconnectCamera(source);
@@ -281,6 +255,7 @@ public class SurveillanceEngine {
             } catch (Throwable t) {
                 log.warn("Could not dispose the partially built engine: {}", t.toString());
             }
+
             surveillance = null;
             source = null;
             subscribed = false;
@@ -300,6 +275,7 @@ public class SurveillanceEngine {
             log.warn("Engine not started - {} will be picked up at the next start", templateId);
             return;
         }
+
         surveillance.addTemplate(templateId, template);
         log.info("Watch list now holds {} template(s)", watchListSize.incrementAndGet());
     }
@@ -309,41 +285,23 @@ public class SurveillanceEngine {
         watchListNames.put(templateId, fullName);
     }
 
-    /**
-     * Swaps the running source for another video file and starts capturing it.
-     *
-     * <p>Connect the replacement before stopping capture, and restore the previous source if
-     * starting it fails. Listeners live on the engine and do not need resubscribing. The old
-     * camera is disconnected only once the replacement has started successfully.
-     *
-     * <p>The configured source is updated in place rather than kept separately, so everything
-     * reading it downstream - the name stored on each detection row, {@code /api/live/meta} -
-     * describes the video actually playing.
-     *
-     * @param file an existing, readable video file
-     * @return the name now reported for the source
-     */
+    /** Swaps the running source for another video file and starts capturing it. */
     public synchronized String useVideoFile(Path file) {
         if (!Files.isRegularFile(file) || !Files.isReadable(file)) {
             throw new IllegalArgumentException("Video file not readable: " + file);
         }
-        SentiveillanceProperties.Source next = inheritedConfig();
-        next.setType(SentiveillanceProperties.Source.Type.VIDEO_FILE);
+
+        Source next = inheritedConfig();
+        next.setType(SourceType.VIDEO_FILE);
         next.setFile(file.toString());
         next.setUrl(null);
         next.setName(file.getFileName().toString());
+
         return switchTo(next);
     }
 
     /**
      * Swaps the running source for a network camera and starts capturing it.
-     *
-     * <p>Same mechanics as {@link #useVideoFile}: the Media device plugin takes a {@code Url}
-     * instead of a {@code FileName} and everything downstream is unchanged. What differs in
-     * practice is failure mode - a file is either readable or not, while a camera can be
-     * unreachable, refuse the credentials, or accept the connection and then never deliver a
-     * frame. Only the first two surface as an exception from here; a silent stream shows up as
-     * {@code hasFrame=false} on {@code /api/live/meta} with the source reported as running.
      *
      * @param name  label stored on every detection row from this camera
      * @param url   rtsp/http URL, credentials included
@@ -351,14 +309,16 @@ public class SurveillanceEngine {
      * @return the name now reported for the source
      */
     public synchronized String useIpCamera(String name, String url, String flags) {
-        SentiveillanceProperties.Source next = inheritedConfig();
-        next.setType(SentiveillanceProperties.Source.Type.IP_CAMERA);
+        Source next = inheritedConfig();
+        next.setType(SourceType.IP_CAMERA);
         next.setUrl(CameraUrls.parse(url).url());
         next.setFile(null);
         next.setName(name == null || name.isBlank() ? CameraUrls.parse(url).host() : name.trim());
+
         if (flags != null && !flags.isBlank()) {
             next.setFlags(flags.trim());
         }
+
         return switchTo(next);
     }
 
@@ -368,52 +328,49 @@ public class SurveillanceEngine {
      * one source - plugin flags and whether the body detector runs - so switching sources never
      * silently changes detection behaviour.
      */
-    private SentiveillanceProperties.Source inheritedConfig() {
-        SentiveillanceProperties.Source cfg = properties.getSource();
-        SentiveillanceProperties.Source next = new SentiveillanceProperties.Source();
+    private Source inheritedConfig() {
+        Source cfg = properties.getSource();
+        Source next = new Source();
         next.setFlags(configuredFlags);
         next.setDetectPeople(cfg.isDetectPeople());
         next.setUploadsDirectory(cfg.getUploadsDirectory());
         next.setAutoStart(cfg.isAutoStart());
+
         return next;
     }
 
-    /**
-     * Connects the replacement source, puts it in place of the current one, and starts it.
-     *
-     * <p>Order matters: connect before stopping anything, and restore the previous source if
-     * starting the replacement fails. Listeners live on the engine, not the source, so nothing
-     * needs resubscribing. The old camera is disconnected only once the replacement is running.
-     *
-     * <p>The configured source is updated in place rather than kept separately, so everything
-     * reading it downstream - the name stored on each detection row, {@code /api/live/meta},
-     * {@code /api/source} - describes what is actually playing.
-     */
-    private String switchTo(SentiveillanceProperties.Source next) {
+    /** Connects the replacement source, puts it in place of the current one, and starts it. */
+    private String switchTo(Source next) {
         if (surveillance == null) {
             throw new IllegalStateException("Surveillance engine is not started");
         }
 
-        SentiveillanceProperties.Source cfg = properties.getSource();
+        Source cfg = properties.getSource();
 
         // Validate/connect before touching the current source or its configuration.
         NSurveillanceSource replacement = sourceFactory.create(surveillance, next);
         NSurveillanceSource previous = source;
+
         boolean wasRunning = running;
         var oldType = cfg.getType();
+
         String oldFile = cfg.getFile(), oldName = cfg.getName(), oldUrl = cfg.getUrl(), oldFlags = cfg.getFlags();
+
         try {
             if (previous != null) {
                 surveillance.stopSource(previous);
                 surveillance.getSources().remove(previous);
             }
+
             surveillance.getSources().add(replacement);
             source = replacement;
+
             cfg.setType(next.getType());
             cfg.setFile(next.getFile());
             cfg.setName(next.getName());
             cfg.setUrl(next.getUrl());
             cfg.setFlags(next.getFlags());
+
             liveFrames.clear();
             recognizedPeople.clear();
             identityByTrace.clear();
@@ -428,17 +385,20 @@ public class SurveillanceEngine {
             cfg.setUrl(oldUrl);
             cfg.setFlags(oldFlags);
             source = previous;
+
             try {
                 surveillance.stopSource(replacement);
             } catch (RuntimeException cleanup) {
                 failure.addSuppressed(cleanup);
             }
+
             try {
                 surveillance.getSources().remove(replacement);
                 if (previous != null) {
                     if (!surveillance.getSources().contains(previous)) {
                         surveillance.getSources().add(previous);
                     }
+
                     if (wasRunning) surveillance.startSource(previous);
                 }
             } catch (RuntimeException rollback) {
@@ -451,39 +411,37 @@ public class SurveillanceEngine {
             }
             throw failure;
         }
+
         if (previous != null) disconnectCamera(previous);
         log.info("Source switched to '{}' ({})", cfg.getName(), cfg.getType());
+
         return cfg.getName();
     }
 
-    /**
-     * What the SDK knows about the attached camera, or null when no source is attached.
-     *
-     * <p>Cached, because this sits behind a dashboard poll - every browser watching asks
-     * twice a second - while what it returns (vendor, model, stream resolution) only changes
-     * when the source does. Each getter crosses into native code and hands back a Java wrapper
-     * around a native handle, so re-reading the device on every request would be work and
-     * garbage for an answer that is the same each time. {@link #forgetSourceDetails()} drops
-     * the cache whenever the source or its capture state changes.
-     */
+    /** What the SDK knows about the attached camera, or null when no source is attached. */
     public CameraDetails sourceDetails() {
         CameraDetails cached = cachedDetails;
         if (cached != null && System.currentTimeMillis() - cachedDetailsAt < DETAILS_CACHE_MILLIS) {
             return cached;
         }
+
         NSurveillanceSource current;
+
         synchronized (this) {
             current = source;
         }
+
         if (current == null) {
             return null;
         }
+
         try {
             NCamera camera = current.getCamera();
             CameraDetails fresh = camera == null ? null
                     : SurveillanceSourceFactory.describe(camera, false);
             cachedDetails = fresh;
             cachedDetailsAt = System.currentTimeMillis();
+
             return fresh;
         } catch (Throwable t) {
             log.debug("Could not read camera details: {}", t.toString());
@@ -497,31 +455,23 @@ public class SurveillanceEngine {
         cachedDetailsAt = 0L;
     }
 
-    /**
-     * Connects to a camera, reports what it is, and disconnects - without touching the
-     * running source.
-     *
-     * <p>Not {@code synchronized}: connecting to an unreachable camera can sit inside ffmpeg
-     * for many seconds, and holding the engine monitor that long would freeze the dashboard's
-     * start/stop buttons too. Probes are serialised against each other with their own lock
-     * instead, and run on their own thread so the HTTP request can give up without leaving the
-     * browser hanging - the probe still finishes and disconnects in the background.
-     *
-     * @param timeout how long to wait before giving up on the SDK
-     * @throws IllegalStateException if another probe is in progress, or this one timed out
-     */
+    /** Connects to a camera, reports what it is, and disconnects - without touching the running source. */
     public CameraDetails probeCamera(String name, String url, String flags, java.time.Duration timeout) {
         NSurveillance engine;
+
         synchronized (this) {
             engine = surveillance;
         }
+
         if (engine == null) {
             throw new IllegalStateException("Surveillance engine is not started");
         }
-        SentiveillanceProperties.Source cfg = inheritedConfig();
-        cfg.setType(SentiveillanceProperties.Source.Type.IP_CAMERA);
+
+        Source cfg = inheritedConfig();
+        cfg.setType(SourceType.IP_CAMERA);
         cfg.setUrl(CameraUrls.parse(url).url());
         cfg.setName(name == null || name.isBlank() ? "probe" : name.trim());
+
         if (flags != null && !flags.isBlank()) {
             cfg.setFlags(flags.trim());
         }
@@ -529,8 +479,10 @@ public class SurveillanceEngine {
         if (!probeLock.tryLock()) {
             throw new IllegalStateException("Another camera test is still running - try again in a moment");
         }
+
         try {
             var future = probeExecutor.submit(() -> sourceFactory.probe(engine.getDeviceManager(), cfg));
+
             try {
                 return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
             } catch (java.util.concurrent.TimeoutException e) {
@@ -541,8 +493,10 @@ public class SurveillanceEngine {
                         + " RTSP is enabled on the camera.");
             } catch (java.util.concurrent.ExecutionException e) {
                 Throwable cause = e.getCause() == null ? e : e.getCause();
+
                 if (cause instanceof RuntimeException runtime) throw runtime;
                 if (cause instanceof Error error) throw error;
+
                 throw new IllegalStateException(cause.toString());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -572,11 +526,13 @@ public class SurveillanceEngine {
             return;
         }
         log.info("Shutting down surveillance ...");
+
         try {
             if (subscribed) {
                 unsubscribe();
                 subscribed = false;
             }
+
             if (source != null) {
                 surveillance.stopSource(source);
                 surveillance.getSources().remove(source);
@@ -590,6 +546,7 @@ public class SurveillanceEngine {
             snapshotExecutor.shutdown();
             candidateExecutor.shutdown();
             probeExecutor.shutdownNow();
+
             try {
                 candidateExecutor.awaitTermination(10, TimeUnit.SECONDS);
                 eventExecutor.awaitTermination(10, TimeUnit.SECONDS);
@@ -597,6 +554,7 @@ public class SurveillanceEngine {
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
             }
+
             surveillance.dispose();
             surveillance = null;
             source = null;
@@ -612,20 +570,12 @@ public class SurveillanceEngine {
                 nonHumanIgnored.get(), detectionLagMillis.get(), unknownCaptured.get());
     }
 
-    /**
-     * @author Md. Raihan Shikder (Raihan-89)
-     * @date 8 November, 2026
-     */
-    public record Stats(boolean running, long events, long subjects, long identified, int watchListSize,
-                        long nonHumanIgnored, long detectionLagMillis, long unknownCaptured) {
-    }
-
     // ------------------------------------------------------------------
     // setup
     // ------------------------------------------------------------------
 
     private void applySettings(NSurveillance s) {
-        SentiveillanceProperties.Faces faces = properties.getFaces();
+        Faces faces = properties.getFaces();
 
         s.setUseGPU(properties.getSdk().isUseGpu());
 
@@ -640,7 +590,7 @@ public class SurveillanceEngine {
         s.setMatchingMaximalResultCount(faces.getMatchingMaximalResultCount());
 
         // ---- people, and keeping vehicles out ----------------------------------------
-        SentiveillanceProperties.People people = properties.getPeople();
+        People people = properties.getPeople();
         // The body detector is shared between people and vehicles, so its threshold is the
         // person-detection threshold here.
         s.setVehicleHumanDetectorThreshold(people.getDetectorThreshold());
@@ -670,6 +620,7 @@ public class SurveillanceEngine {
                 faces.getQualityThreshold(),
                 faces.getMinimalInterOcularDistance(),
                 faces.getTemplateSize());
+
         log.info("People settings  - humansOnly={}, detectorScaling={}, bodyThreshold={}, clothing={}, "
                         + "headCoverings={}, ageGroup={}",
                 people.isHumansOnly(),
@@ -683,13 +634,6 @@ public class SurveillanceEngine {
     /**
      * Caps how often the detector is fed a frame, which is what keeps the overlay live.
      *
-     * <h2>The problem this solves</h2>
-     * Measured on this machine: the detector processed a 7.5s, 2160x3840, 30 fps clip in
-     * 13.2s of wall time - about 0.57x real time. A source that produces frames faster than
-     * the detector consumes them builds a backlog, so the gap between what the camera sees
-     * and what the overlay shows does not settle, it grows for as long as the source runs.
-     * No amount of transport tuning fixes that; the detector has to be given less work.
-     *
      * <h2>Measured effect</h2>
      * Peak {@code detectionLagMillis} over the same clip, at {@code detectorScaling=ONE}:
      * <pre>
@@ -699,21 +643,14 @@ public class SurveillanceEngine {
      * </pre>
      * The cost is temporal resolution - fewer samples per visit, so a fast-moving person is
      * tracked more coarsely - not accuracy: identification still worked at every setting.
-     *
-     * <h2>Why setProperty</h2>
-     * {@code ObjectTracker.BatcherMinFrameTime} has no setter in the Java binding, so it is
-     * set through the generic property API. It is present in SentiVeillance 10.1 (read back
-     * as a Float, default 0.17, in seconds) but it is not part of the documented surface, so
-     * a failure here is logged and ignored rather than being allowed to stop startup - the
-     * same lesson as {@code Faces.WithDetailsOnly}, which the binding exposes and the native
-     * library does not.
      */
-    private void applyDetectorFrameRateCap(NSurveillance s, SentiveillanceProperties.People people) {
+    private void applyDetectorFrameRateCap(NSurveillance s, People people) {
         float seconds = people.getDetectorMinFrameTimeSeconds();
         if (seconds <= 0) {
             log.info("Detector frame-rate cap disabled - the SDK default applies");
             return;
         }
+
         try {
             s.setProperty("ObjectTracker.BatcherMinFrameTime", seconds);
             log.info("Detector frame-rate cap: {}s between frames (~{} fps)",
@@ -726,6 +663,7 @@ public class SurveillanceEngine {
 
     private void loadWatchList(Collection<Employee> watchList) {
         int added = 0;
+
         for (Employee employee : watchList) {
             if (employee.getFaceTemplate() == null || employee.getFaceTemplate().length == 0) {
                 continue;
@@ -734,6 +672,7 @@ public class SurveillanceEngine {
             watchListNames.put(employee.getTemplateId(), employee.getFullName());
             added++;
         }
+
         watchListSize.set(added);
         log.info("Watch list loaded: {} template(s)", added);
     }
@@ -756,25 +695,14 @@ public class SurveillanceEngine {
         surveillance.removeSubjectDisappearedListener(onSubjectDisappeared);
     }
 
-    /**
-     * Hands the camera back to the device manager that produced it.
-     *
-     * <p>{@link SurveillanceSourceFactory} obtains it through
-     * {@code NDeviceManager.connectToDevice}, so something has to disconnect it again.
-     * Skipping this leaves the NdmMedia plugin holding a live device while the engine is
-     * disposed, and the process then dies during native teardown - either
-     * {@code NError (-7) NdmMedia is not initialized} or a glibc abort
-     * ("corrupted double-linked list", exit 134) after all Java shutdown logging is done.
-     *
-     * <p>The {@code isDisconnectable()} guard and the ordering are taken from the SDK's own
-     * {@code SurveillanceService.remove(SourceState)} in the Java web sample.
-     */
+    /** Hands the camera back to the device manager that produced it. */
     private void disconnectCamera(NSurveillanceSource s) {
         try {
             NCamera camera = s.getCamera();
             if (camera == null || !camera.isDisconnectable()) {
                 return;
             }
+
             surveillance.getDeviceManager().disconnectFromDevice(camera);
             log.info("Camera disconnected from the device manager");
         } catch (Throwable t) {
@@ -856,6 +784,7 @@ public class SurveillanceEngine {
             if (snapshot.isIdentified()) {
                 identityByTrace.put(snapshot.traceIndex(), snapshot.matchedTemplateId());
                 CandidateCapture capture = candidateCaptures.get(snapshot.traceIndex());
+
                 if (capture != null && !capture.identified) {
                     capture.identified = true;
                     candidateExecutor.execute(() -> {
@@ -863,6 +792,7 @@ public class SurveillanceEngine {
                     });
                 }
             }
+
             if (disappeared) {
                 candidateCaptures.remove(snapshot.traceIndex());
                 subjectsSeen.incrementAndGet();
@@ -887,35 +817,21 @@ public class SurveillanceEngine {
     private static final java.util.Set<String> NON_HUMAN_OBJECT_TYPES =
             java.util.Set.of("CAR", "BUS", "TRUCK", "BIKE");
 
-    /**
-     * Whether this event describes a person.
-     *
-     * <p>The SDK's body detector cannot be restricted to people: it classifies every box it
-     * finds as PERSON, CAR, BUS, TRUCK or BIKE, and the modality that enables it is literally
-     * called {@code VEHICLES_AND_HUMANS}. Filtering here is therefore the only way to get a
-     * people-only pipeline while still tracking somebody whose face is turned away.
-     *
-     * <p>A null object type is kept: face events carry no object type at all, and an error
-     * event has to be reported whatever it was about.
-     */
+    /** Whether this event describes a person. */
     private boolean isHumanSubject(SubjectEventSnapshot snapshot) {
         if (!properties.getPeople().isHumansOnly()) {
             return true;
         }
+
         String objectType = snapshot.objectType();
         return objectType == null || !NON_HUMAN_OBJECT_TYPES.contains(objectType);
     }
 
-    /**
-     * Pulls everything we care about out of a native details object.
-     *
-     * <p>{@code getBestDetails()} returns the single best frame the engine saw for this
-     * subject across the whole track - that is the one worth saving a picture of, not the
-     * current frame. Mirrors the SDK's {@code EventData} constructor in the Java web sample.
-     */
+    /** Pulls everything we care about out of a native details object. */
     private SubjectEventSnapshot copy(NSurveillanceEventDetails details, String eventTypeName, boolean disappeared) {
         String sourceName = properties.getSource().getName();
         Throwable error = details.getError();
+
         if (error != null) {
             return new SubjectEventSnapshot(sourceName, eventTypeName, details.getTraceIndex(),
                     Instant.now(), 0L, null, null, null, false, null, null,
@@ -953,20 +869,25 @@ public class SurveillanceEngine {
                     width = rect.width();
                     height = rect.height();
                 }
+
                 hasFaceDetails = best.getAttributesContainsDetails();
                 String identity = matchedId == null ? identityByTrace.get(details.getTraceIndex()) : matchedId;
+
                 if (identity != null) {
                     byte[] face = null;
                     if (hasFaceDetails && recognizedPeople.needsFace(identity)) {
                         face = recognizedFace(best);
                     }
+
                     recognizedPeople.seen(identity, watchListNames.getOrDefault(identity, identity),
                             sourceName, matchScore, face);
                 }
+
                 if (disappeared && properties.getSnapshots().isEnabled()) {
                     snapshotPath = saveSnapshot(best, details.getTraceIndex(), matchedId, rect,
                             hasFaceDetails);
                 }
+
                 if (hasFaceDetails && identity == null
                         && properties.getEnrollment().isCaptureUnknownSubjects()
                         && (objectType == null || objectType.Type == null
@@ -999,11 +920,14 @@ public class SurveillanceEngine {
                                 String sourceName, boolean disappeared) {
         int trace = details.getTraceIndex();
         CandidateCapture capture = candidateCaptures.computeIfAbsent(trace, ignored -> new CandidateCapture());
+
         if (capture.identified || capture.suppressed || (capture.pending && !disappeared)
                 || (!disappeared && System.currentTimeMillis() < capture.nextAttempt)) return;
         com.neurotec.biometrics.NLAttributes attributes = null;
+
         try {
             attributes = best.getAttributes(false);
+
             if (attributes == null) return;
             int rawQuality = Byte.toUnsignedInt(attributes.getQuality());
             int quality = rawQuality <= 100 ? rawQuality : -1;
@@ -1014,10 +938,13 @@ public class SurveillanceEngine {
             // A finished visit needs one final fallback even if an early extraction is
             // still queued. It runs behind that attempt and cannot create a second card.
             boolean usesSlot = !disappeared;
+
             if (usesSlot && !candidateSlots.tryAcquire()) return;
+
             boolean submitted = false;
             try {
                 byte[] jpeg = recognizedFace(best);
+
                 if (jpeg == null) return;
                 // Some SDK events already contain extracted features. Copy them while their
                 // native handles are valid, avoiding another detect/extract pass entirely.
@@ -1065,14 +992,17 @@ public class SurveillanceEngine {
             if (capture.identified || capture.suppressed) return;
             byte[] bytes = liveTemplate != null && liveTemplate.length > 0
                     ? liveTemplate : candidateMatcher.extract(jpeg);
+
             if (bytes == null || bytes.length == 0 || capture.identified) return;
             var result = unknownCandidates.capture(sourceName, trace, capture.savedId, bytes, jpeg, quality);
+
             if (result == null) {
                 capture.suppressed = true; // dismissed/enrolled while this frame was in flight
                 return;
             }
             capture.savedId = result.id();
             capture.savedQuality = result.quality();
+
             if (result.created()) unknownCaptured.incrementAndGet();
         } catch (Exception e) {
             log.warn("Could not queue unknown face for trace {} (will retry): {}", trace, e.toString());
@@ -1081,24 +1011,16 @@ public class SurveillanceEngine {
         }
     }
 
-    /**
-     * Captures the best frame of a finished track for eyeballing results.
-     *
-     * <p>Runs on the SDK callback thread, so it does the minimum that cannot be deferred:
-     * {@code best} is a native handle the caller disposes the moment this returns, so the
-     * pixels have to be encoded now. The resulting bytes are then handed to
-     * {@link #snapshotExecutor} and the file is written there - the disk write was the
-     * expensive half, and doing both inline cost 64-71 ms of the capture thread per subject.
-     *
-     * @return where the file will be written, or null if there was nothing to capture
-     */
+    /** Captures the best frame of a finished track for eyeballing results. */
     private String saveSnapshot(NSurveillanceEventDetails best, int traceIndex, String matchedId,
                                 NRect rect, boolean hasFaceDetails) {
         NImage image = null;
         NImage cropped = null;
+
         try {
             // false = the SDK keeps ownership of the pixel buffer, same as its own samples.
             image = best.getOriginalImage(false);
+
             if (image == null) {
                 return null;
             }
@@ -1107,9 +1029,11 @@ public class SurveillanceEngine {
             // detection rectangle: the latter is a whole body, which for somebody standing close
             // is most of the frame again and leaves their face a small part of a large image.
             cropped = cropToFace(image, best, hasFaceDetails);
+
             if (cropped == null) {
                 cropped = cropToSubject(image, rect);
             }
+
             if (cropped != null) {
                 image = cropped;
             }
@@ -1121,12 +1045,14 @@ public class SurveillanceEngine {
             Path target = dir.resolve(name);
 
             com.neurotec.io.NBuffer encoded = image.save(NImageFormat.getJPEG());
+
             byte[] jpeg;
             try {
                 jpeg = encoded.toByteArray();
             } finally {
                 encoded.dispose();
             }
+
             snapshotExecutor.execute(() -> {
                 try {
                     Files.createDirectories(dir);
@@ -1149,6 +1075,7 @@ public class SurveillanceEngine {
             if (image != null) {
                 image.dispose();
             }
+
             if (cropped != null && cropped != image) {
                 cropped.dispose();
             }
@@ -1159,11 +1086,14 @@ public class SurveillanceEngine {
     private byte[] recognizedFace(NSurveillanceEventDetails best) {
         NImage original = null;
         NImage face = null;
+
         try {
             original = best.getOriginalImage(false);
             if (original == null) return null;
+
             face = cropToFace(original, best, true);
             if (face == null) return null;
+
             var encoded = face.save(NImageFormat.getJPEG());
             try {
                 return encoded.toByteArray();
@@ -1179,31 +1109,24 @@ public class SurveillanceEngine {
         }
     }
 
-    /**
-     * Cuts out the face, using the geometry the face detector itself reported.
-     *
-     * <p>{@code NLAttributes.getBoundingRect()} is the face box rather than the body box the
-     * tracker reports, which is what makes the resulting image actually tell you who this is.
-     * Same approach as the SDK's {@code SubjectInfo.cutFaceThumbnail}. Inflated generously -
-     * a face cropped exactly to its bounding box is hard to recognise, so this keeps hair,
-     * chin and some shoulder.
-     *
-     * @return the face crop, or null when the event carried no face geometry
-     */
+    /** Cuts out the face, using the geometry the face detector itself reported. */
     private NImage cropToFace(NImage image, NSurveillanceEventDetails best, boolean hasFaceDetails) {
         if (!hasFaceDetails) {
             return null;
         }
+
         com.neurotec.biometrics.NLAttributes attributes = null;
         try {
             attributes = best.getAttributes(false);
             if (attributes == null) {
                 return null;
             }
+
             NRect face = attributes.getBoundingRect();
             if (face == null || face.width() <= 0 || face.height() <= 0) {
                 return null;
             }
+
             double padding = properties.getSnapshots().getFacePadding();
             int padX = (int) Math.round(face.width() * padding);
             int padY = (int) Math.round(face.height() * padding);
@@ -1211,6 +1134,7 @@ public class SurveillanceEngine {
             int top = Math.max(0, face.top - padY);
             int right = Math.min(image.getWidth(), face.left + face.width() + padX);
             int bottom = Math.min(image.getHeight(), face.top + face.height() + padY);
+
             if (right - left <= 0 || bottom - top <= 0) {
                 return null;
             }
@@ -1225,27 +1149,21 @@ public class SurveillanceEngine {
         }
     }
 
-    /**
-     * Cuts the subject out of the frame, with some room around them for context.
-     *
-     * <p>The rectangle is inflated by {@code snapshots.subjectPadding} of its own size on each
-     * axis and then clamped to the frame, so a person at the very edge still yields a valid
-     * crop rather than nothing. {@code NImage.crop} is native, so this costs far less than
-     * encoding the whole frame would have.
-     *
-     * @return the crop, or null to fall back to the full frame
-     */
+    /** Cuts the subject out of the frame, with some room around them for context. */
     private NImage cropToSubject(NImage image, NRect rect) {
         if (rect == null) {
             return null;
         }
+
         try {
             double padding = properties.getSnapshots().getSubjectPadding();
             int w = rect.width();
             int h = rect.height();
+
             if (w <= 0 || h <= 0) {
                 return null;
             }
+
             int padX = (int) Math.round(w * padding);
             int padY = (int) Math.round(h * padding);
 
@@ -1253,6 +1171,7 @@ public class SurveillanceEngine {
             int top = Math.max(0, rect.top - padY);
             int right = Math.min(image.getWidth(), rect.left + w + padX);
             int bottom = Math.min(image.getHeight(), rect.top + h + padY);
+
             if (right - left <= 0 || bottom - top <= 0) {
                 return null;
             }

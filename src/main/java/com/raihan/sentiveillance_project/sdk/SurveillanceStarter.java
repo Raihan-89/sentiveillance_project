@@ -1,7 +1,7 @@
 package com.raihan.sentiveillance_project.sdk;
 
 import com.raihan.sentiveillance_project.domain.Employee;
-import com.raihan.sentiveillance_project.enrollment.EnrollmentService;
+import com.raihan.sentiveillance_project.service.EnrollmentService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;

@@ -1,6 +1,8 @@
-package com.raihan.sentiveillance_project.domain;
+package com.raihan.sentiveillance_project.repository;
 
+import com.raihan.sentiveillance_project.domain.Employee;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 
 import java.util.Optional;
 
@@ -15,6 +17,6 @@ public interface EmployeeRepository extends JpaRepository<Employee, Long> {
     boolean existsByTemplateId(String templateId);
 
     /** Highest employee number in use, so a person enrolled from video gets the next one. */
-    @org.springframework.data.jpa.repository.Query("select max(e.employeeNo) from Employee e")
+    @Query("select max(e.employeeNo) from Employee e")
     Integer findMaxEmployeeNo();
 }

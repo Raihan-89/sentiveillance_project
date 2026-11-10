@@ -1,4 +1,4 @@
-package com.raihan.sentiveillance_project.enrollment;
+package com.raihan.sentiveillance_project.service;
 
 import com.neurotec.biometrics.NBiometricEngine;
 import com.neurotec.biometrics.NBiometricStatus;
@@ -8,7 +8,8 @@ import com.neurotec.biometrics.NTemplateSize;
 import com.neurotec.images.NImage;
 import com.raihan.sentiveillance_project.config.SentiveillanceProperties;
 import com.raihan.sentiveillance_project.domain.Employee;
-import com.raihan.sentiveillance_project.domain.EmployeeRepository;
+import com.raihan.sentiveillance_project.repository.EmployeeRepository;
+import com.raihan.sentiveillance_project.model.Enrollment;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,18 +24,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
-/**
- * Turns employee photos into face templates and stores them.
- *
- * <p>The chain is: {@link NImage} -> {@link NFace} -> {@link NSubject} ->
- * {@code NBiometricEngine.enroll(subject, false)} -> {@code subject.getTemplate().save()}.
- * Those bytes are the <em>template</em>: a mathematical description of the face, not a
- * picture. The surveillance engine only ever compares templates, which is why enrolment can
- * happen offline from a still photo while recognition happens live on video.
- *
- * <p>{@code NBiometricEngine} (rather than {@code NBiometricClient}) is what the SDK's own
- * Java surveillance samples use for watch-list enrolment - see
- * {@code Samples/Surveillance/Java/surveillance-web-sample/.../WatchListService.java}.
+/** Turns employee photos into face templates and stores them.
  *
  * @author Md. Raihan Shikder (Raihan-89)
  * @date 8 November, 2026
@@ -57,13 +47,9 @@ public class EnrollmentService {
         this.employees = employees;
     }
 
-    /**
-     * Enrolls every {@code Employee_<no>_<name>.<ext>} photo in the configured directory.
-     *
-     * @return the employees that are now enrolled (newly created ones plus pre-existing)
-     */
     public List<Employee> enrollFromPhotoDirectory() {
-        SentiveillanceProperties.Enrollment cfg = properties.getEnrollment();
+        Enrollment cfg = properties.getEnrollment();
+
         if (!cfg.isEnabled()) {
             log.info("Photo enrolment disabled; using whatever is already in the database");
             return employees.findAll();
@@ -127,6 +113,7 @@ public class EnrollmentService {
         NSubject subject = new NSubject();
         NFace face = new NFace();
         NImage image = null;
+
         try {
             image = NImage.fromFile(photo.toString());
             face.setImage(image);

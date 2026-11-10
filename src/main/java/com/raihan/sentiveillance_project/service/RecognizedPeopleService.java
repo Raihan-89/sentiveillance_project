@@ -1,4 +1,4 @@
-package com.raihan.sentiveillance_project.live;
+package com.raihan.sentiveillance_project.service;
 
 import org.springframework.stereotype.Service;
 
@@ -22,7 +22,9 @@ public class RecognizedPeopleService {
 
     public synchronized void seen(String id, String name, String source, Integer score, byte[] face) {
         Entry old = people.remove(id);
+
         if (old == null && face == null) return;
+
         long now = System.currentTimeMillis();
         people.put(id, new Entry(id, name, source, score == null && old != null ? old.score : score,
                 Instant.now(), face == null ? old.faceVersion : now, face == null ? old.face : face));

@@ -1,15 +1,9 @@
-package com.raihan.sentiveillance_project.detection;
+package com.raihan.sentiveillance_project.records;
 
 import java.time.Instant;
 
 /**
  * A plain-Java copy of one {@code NSurveillanceEventDetails}.
- *
- * <p>Event details are native handles owned by the SDK: they are valid only inside the
- * callback and must be {@code dispose()}d there. Everything we want to keep is therefore
- * copied into this record on the callback thread, and only the record travels to the
- * database executor. Doing real work (JDBC, disk) on an SDK callback thread stalls the
- * video pipeline and drops frames.
  *
  * @param sourceName           configured name of the source the event came from
  * @param eventType            NSurveillanceEventType name

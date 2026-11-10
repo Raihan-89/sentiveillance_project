@@ -1,9 +1,9 @@
-package com.raihan.sentiveillance_project.web;
+package com.raihan.sentiveillance_project.controller;
 
 import com.raihan.sentiveillance_project.domain.Employee;
 import com.raihan.sentiveillance_project.domain.UnknownSubject;
-import com.raihan.sentiveillance_project.domain.UnknownSubjectRepository;
-import com.raihan.sentiveillance_project.enrollment.VideoEnrollmentService;
+import com.raihan.sentiveillance_project.repository.UnknownSubjectRepository;
+import com.raihan.sentiveillance_project.service.VideoEnrollmentService;
 import com.raihan.sentiveillance_project.sdk.SurveillanceEngine;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;

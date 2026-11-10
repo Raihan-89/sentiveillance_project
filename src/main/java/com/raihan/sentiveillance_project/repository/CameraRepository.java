@@ -1,5 +1,6 @@
-package com.raihan.sentiveillance_project.domain;
+package com.raihan.sentiveillance_project.repository;
 
+import com.raihan.sentiveillance_project.domain.Camera;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;

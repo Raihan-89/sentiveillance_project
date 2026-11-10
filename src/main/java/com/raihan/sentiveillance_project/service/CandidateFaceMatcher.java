@@ -1,4 +1,4 @@
-package com.raihan.sentiveillance_project.enrollment;
+package com.raihan.sentiveillance_project.service;
 
 import com.neurotec.biometrics.*;
 import com.neurotec.images.NImage;

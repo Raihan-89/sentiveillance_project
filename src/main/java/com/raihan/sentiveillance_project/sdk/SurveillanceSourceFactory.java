@@ -13,6 +13,8 @@ import com.neurotec.surveillance.NSurveillance;
 import com.neurotec.surveillance.NSurveillanceModalityType;
 import com.neurotec.surveillance.NSurveillanceSource;
 import com.raihan.sentiveillance_project.config.SentiveillanceProperties;
+import com.raihan.sentiveillance_project.model.Source;
+import com.raihan.sentiveillance_project.records.CameraDetails;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -22,15 +24,6 @@ import java.util.EnumSet;
 
 /**
  * Turns a configured video file or RTSP camera into an {@link NSurveillanceSource}.
- *
- * <p>Both cases go through the same door: the SDK's {@code "Media"} device plugin. You ask
- * the plugin which parameters it accepts, fill a {@link NParameterBag}, and
- * {@code connectToDevice} hands back an {@link NCamera}. A file uses the {@code FileName}
- * parameter, a network camera uses {@code Url} - that is the only difference, which is
- * exactly why one camera today extends to many cameras later without touching this class.
- *
- * <p>Pattern copied from {@code Tutorials/Surveillance/CS/CountSubjectsCS/Program.cs}
- * ({@code ConnectDevice}) and the Java web sample's {@code addSource}.
  *
  * @author Md. Raihan Shikder (Raihan-89)
  * @date 8 November, 2026
@@ -53,7 +46,7 @@ public class SurveillanceSourceFactory {
         return create(surveillance, properties.getSource());
     }
 
-    NSurveillanceSource create(NSurveillance surveillance, SentiveillanceProperties.Source cfg) {
+    NSurveillanceSource create(NSurveillance surveillance, Source cfg) {
         EnumSet<NSurveillanceModalityType> modalities = licenseService.resolveModalities(cfg.isDetectPeople());
 
         NCamera camera = connect(surveillance.getDeviceManager(), cfg);
@@ -68,11 +61,13 @@ public class SurveillanceSourceFactory {
         return source;
     }
 
-    private NCamera connect(NDeviceManager deviceManager, SentiveillanceProperties.Source cfg) {
+    private NCamera connect(NDeviceManager deviceManager, Source cfg) {
         NPlugin plugin = NDeviceManager.getPluginManager().getPlugins().get(MEDIA_PLUGIN);
+
         if (plugin == null || plugin.getState() != NPluginState.PLUGGED) {
             throw new IllegalStateException("The SDK's 'Media' device plugin is not available");
         }
+
         if (!NDeviceManager.isConnectToDeviceSupported(plugin)) {
             throw new IllegalStateException("The 'Media' plugin does not support connecting to a device");
         }
@@ -106,33 +101,25 @@ public class SurveillanceSourceFactory {
         if (!(device instanceof NCamera cameraDevice)) {
             throw new IllegalStateException("Media plugin returned a non-camera device: " + device);
         }
+
         return cameraDevice;
     }
 
-    private Path requireVideoFile(SentiveillanceProperties.Source cfg) {
+    private Path requireVideoFile(Source cfg) {
         if (cfg.getFile() == null || cfg.getFile().isBlank()) {
             throw new IllegalStateException("sentiveillance.source.file must be set for type=VIDEO_FILE");
         }
+
         Path file = Path.of(cfg.getFile()).toAbsolutePath().normalize();
         if (!Files.isReadable(file)) {
             throw new IllegalStateException("Video file not readable: " + file);
         }
+
         return file;
     }
 
-    /**
-     * Connects to a camera, reads what the SDK knows about it, and disconnects again.
-     *
-     * <p>This is the "Test" button behind the dashboard: it exercises the exact code path the
-     * engine will use - same plugin, same {@code Url} parameter, same credentials - without
-     * disturbing the source that is currently attached. A device connected through
-     * {@code connectToDevice} is independent of {@link NSurveillance}'s source collection, so
-     * nothing here touches the running pipeline.
-     *
-     * <p>Always disconnects, including on failure: leaving the NdmMedia plugin holding a
-     * device is what makes native teardown abort the JVM later.
-     */
-    CameraDetails probe(NDeviceManager deviceManager, SentiveillanceProperties.Source cfg) {
+    /** Connects to a camera, reads what the SDK knows about it, and disconnects again. */
+    CameraDetails probe(NDeviceManager deviceManager, Source cfg) {
         NCamera camera = connect(deviceManager, cfg);
         boolean started = false;
         try {
@@ -159,6 +146,7 @@ public class SurveillanceSourceFactory {
             } catch (Throwable t) {
                 log.warn("Could not stop the probed camera: {}", t.toString());
             }
+
             try {
                 if (camera.isDisconnectable()) {
                     deviceManager.disconnectFromDevice(camera);
@@ -187,21 +175,7 @@ public class SurveillanceSourceFactory {
                 && Boolean.TRUE.equals(quietly(() -> video.getWidth() > 0));
     }
 
-    /**
-     * Reads identity and picture shape off a connected camera.
-     *
-     * <p>{@code getCurrentFormat()} is null until the stream has been negotiated, which on a
-     * network source happens when capture starts - so a camera that has been connected but
-     * never started reports its make and model with 0x0 as the frame size.
-     *
-     * <p>{@code withFormats} decides whether {@code getFormats()} is read as well. It is only
-     * asked for during a one-off test: every getter here allocates a Java wrapper around a
-     * native handle, and this method also sits behind a dashboard poll, where the goal is to
-     * touch as little of the device as possible.
-     *
-     * <p>Defensive throughout: every getter crosses into native code, and a plugin that has
-     * lost the stream throws rather than returning null.
-     */
+    /** Reads identity and picture shape off a connected camera. */
     static CameraDetails describe(NCamera camera, boolean withFormats) {
         String deviceId = quietly(camera::getId);
         String displayName = quietly(camera::getDisplayName);
@@ -215,6 +189,7 @@ public class SurveillanceSourceFactory {
         Double frameRate = null;
         String codec = null;
         NMediaFormat current = quietly(camera::getCurrentFormat);
+
         if (withFormats) {
             NMediaFormat[] formats = quietly(camera::getFormats);
             if (formats != null) {
@@ -224,15 +199,18 @@ public class SurveillanceSourceFactory {
                 }
             }
         }
+
         if (current instanceof NVideoFormat video) {
             Integer w = quietly(video::getWidth);
             Integer h = quietly(video::getHeight);
             width = w == null ? 0 : w;
             height = h == null ? 0 : h;
             var rate = quietly(video::getFrameRate);
+
             if (rate != null && rate.denominator != 0) {
                 frameRate = Math.round(rate.numerator * 100.0 / rate.denominator) / 100.0;
             }
+
             Integer subtype = quietly(video::getMediaSubtype);
             if (subtype != null) {
                 codec = quietly(() -> video.mediaSubtypeToString(subtype));

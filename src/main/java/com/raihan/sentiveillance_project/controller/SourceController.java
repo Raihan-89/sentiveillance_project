@@ -1,6 +1,7 @@
-package com.raihan.sentiveillance_project.web;
+package com.raihan.sentiveillance_project.controller;
 
 import com.raihan.sentiveillance_project.config.SentiveillanceProperties;
+import com.raihan.sentiveillance_project.model.Source;
 import com.raihan.sentiveillance_project.sdk.CameraUrls;
 import com.raihan.sentiveillance_project.sdk.SurveillanceEngine;
 import lombok.extern.slf4j.Slf4j;
@@ -25,11 +26,6 @@ import java.util.stream.Stream;
 /**
  * Choosing which video the engine runs on, from the dashboard rather than the config file.
  *
- * <p>Uploaded files are kept in {@code source.uploads-directory} instead of a temp file: the
- * SDK is handed a path and reads from it for as long as the source is attached, well after the
- * upload request has returned. Keeping them also means a video can be replayed later without
- * uploading it again, which is what {@code GET /api/source/videos} lists.
- *
  * @author Md. Raihan Shikder (Raihan-89)
  * @date 9 November, 2026
  */
@@ -50,19 +46,12 @@ public class SourceController {
         this.engine = engine;
     }
 
-    /**
-     * What the engine is looking at right now - whichever kind of source it is.
-     *
-     * <p>The dashboard needs one answer to "what is playing", and a video file and a camera
-     * describe themselves differently: a file has a path and a size, a camera has an address,
-     * a vendor and a negotiated stream format. Both are reported here, with the camera's
-     * password masked, alongside what the SDK says about the device it actually holds
-     * ({@code camera}) - which is how a camera that connected but never delivered a frame
-     * becomes visible instead of looking like a running source.
-     */
+    /** What the engine is looking at right now - whichever kind of source it is. */
     @GetMapping
     public Map<String, Object> current() {
-        SentiveillanceProperties.Source cfg = properties.getSource();
+
+        Source cfg = properties.getSource();
+
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("type", String.valueOf(cfg.getType()));
         body.put("name", cfg.getName());
@@ -74,14 +63,17 @@ public class SourceController {
         body.put("camera", engine.sourceDetails());
         // The recognition floor, so the page can say how big a head has to be on this stream.
         body.put("minimalInterOcularDistance", properties.getFaces().getMinimalInterOcularDistance());
+
         return body;
     }
 
     /** The video playing now, plus everything available to switch to. */
     @GetMapping("/videos")
     public Map<String, Object> videos() throws IOException {
+
         Path dir = uploadsDirectory();
         List<Map<String, Object>> files = List.of();
+
         if (Files.isDirectory(dir)) {
             try (Stream<Path> entries = Files.list(dir)) {
                 files = entries
@@ -92,42 +84,47 @@ public class SourceController {
                         .toList();
             }
         }
+
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("current", properties.getSource().getName());
         body.put("currentFile", properties.getSource().getFile());
         body.put("videos", files);
+
         return body;
     }
 
-    /**
-     * Accepts a video from the browser and switches to it.
-     *
-     * <p>Only the base name of the upload is used, and the result is checked to still sit
-     * inside the uploads directory, so a crafted name cannot write elsewhere.
-     */
+    /** Accepts a video from the browser and switches to it. */
     @PostMapping("/video")
     public ResponseEntity<?> upload(@RequestParam("file") MultipartFile file) {
+
         if (file == null || file.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "No file was uploaded"));
         }
+
         String original = file.getOriginalFilename();
         String name = original == null ? "" : original.replace('\\', '/');
         name = name.substring(name.lastIndexOf('/') + 1);
+
         if (name.isBlank() || name.indexOf('\0') >= 0) {
             return ResponseEntity.badRequest().body(Map.of("error", "Invalid file name"));
         }
+
         if (!isVideo(name)) {
             return ResponseEntity.badRequest().body(Map.of(
                     "error", "Not a video this SDK reads. Supported: " + VIDEO_EXTENSIONS));
         }
+
         try {
             Path dir = uploadsDirectory();
             Files.createDirectories(dir);
+
             // A unique path also protects an active source from same-name uploads.
             int dot = name.lastIndexOf('.');
             String stem = name.substring(0, dot).replaceAll("[^\\p{L}\\p{N}._-]", "_");
+
             if (stem.length() > 80) stem = stem.substring(0, 80);
             Path target = Files.createTempFile(dir, stem + "-", name.substring(dot).toLowerCase(Locale.ROOT));
+
             try (var in = file.getInputStream()) {
                 Files.copy(in, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             } catch (IOException | RuntimeException e) {
@@ -150,13 +147,16 @@ public class SourceController {
     /** Switches to a video already in the uploads directory. */
     @PostMapping("/video/{name}")
     public ResponseEntity<?> select(@PathVariable String name) throws IOException {
+
         Path dir = uploadsDirectory();
         Path target;
+
         try {
             target = dir.resolve(name).normalize();
         } catch (InvalidPathException e) {
             return ResponseEntity.badRequest().body(Map.of("error", "Invalid file name"));
         }
+
         if (!dir.equals(target.getParent()) || !isVideo(name)
                 || !Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
             return ResponseEntity.status(404).body(Map.of("error", "Uploaded video not found"));
@@ -165,6 +165,7 @@ public class SourceController {
     }
 
     private ResponseEntity<?> switchTo(Path video) {
+
         try {
             String name = engine.useVideoFile(video);
             return ResponseEntity.ok(Map.of("current", name, "running", engine.isRunning()));
@@ -199,6 +200,7 @@ public class SourceController {
     private static Map<String, Object> describe(Path p) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("name", p.getFileName().toString());
+
         try {
             m.put("bytes", Files.size(p));
         } catch (IOException e) {

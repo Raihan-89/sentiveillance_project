@@ -1,4 +1,4 @@
-package com.raihan.sentiveillance_project.live;
+package com.raihan.sentiveillance_project.records;
 
 /**
  * One detection rectangle, in source-frame pixel coordinates, waiting to be drawn.

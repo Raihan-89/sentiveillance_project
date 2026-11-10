@@ -1,9 +1,10 @@
 package com.raihan.sentiveillance_project.web;
 
-import com.raihan.sentiveillance_project.camera.CameraForm;
-import com.raihan.sentiveillance_project.camera.CameraService;
+import com.raihan.sentiveillance_project.controller.CameraController;
+import com.raihan.sentiveillance_project.records.CameraForm;
+import com.raihan.sentiveillance_project.service.CameraService;
 import com.raihan.sentiveillance_project.domain.Camera;
-import com.raihan.sentiveillance_project.sdk.CameraDetails;
+import com.raihan.sentiveillance_project.records.CameraDetails;
 import com.raihan.sentiveillance_project.sdk.SurveillanceEngine;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

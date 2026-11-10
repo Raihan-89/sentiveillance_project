@@ -10,11 +10,6 @@ import java.time.Instant;
 /**
  * One surveillance event as reported by the SDK.
  *
- * <p>A single person walking through the frame produces SUBJECT_APPEARED, many
- * SUBJECT_TRACK events and one SUBJECT_DISAPPEARED, all carrying the same
- * {@code traceIndex}. That trace index is the unit an attendance system should aggregate
- * over - one trace is one visit, not one row.
- *
  *  @author Md. Raihan Shikder (Raihan-89)
  *  @date 8 November, 2026
  */
@@ -77,10 +72,13 @@ public class DetectionEvent {
 
     @Column(name = "rect_left")
     private Integer rectLeft;
+
     @Column(name = "rect_top")
     private Integer rectTop;
+
     @Column(name = "rect_width")
     private Integer rectWidth;
+
     @Column(name = "rect_height")
     private Integer rectHeight;
 

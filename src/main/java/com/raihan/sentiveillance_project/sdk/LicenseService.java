@@ -5,6 +5,7 @@ import com.neurotec.licensing.NLicenseManager;
 import com.neurotec.licensing.NLicenseObtainedStatus;
 import com.neurotec.surveillance.NSurveillanceModalityType;
 import com.raihan.sentiveillance_project.config.SentiveillanceProperties;
+import com.raihan.sentiveillance_project.model.Sdk;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -32,6 +33,7 @@ public class LicenseService {
 
     /** Face detection, tracking and recognition. */
     private static final String COMPONENT_FACES = "SentiVeillance";
+
     /**
      * The body detector, licensed by Neurotechnology as "VH" (vehicles & humans).
      *
@@ -55,9 +57,11 @@ public class LicenseService {
 
     @Getter
     private boolean facesAvailable;
+
     /** Whether the body detector is licensed - people without a visible face. */
     @Getter
     private boolean bodiesAvailable;
+
     @Getter
     private boolean obtained;
 
@@ -72,13 +76,15 @@ public class LicenseService {
         if (obtained) {
             return;
         }
-        SentiveillanceProperties.Sdk sdk = properties.getSdk();
+
+        Sdk sdk = properties.getSdk();
 
         NLicenseManager.setTrialMode(sdk.isTrialMode());
 
         if (sdk.getUseHttps() != null) {
             NLicenseManager.setUseHttps(sdk.getUseHttps());
         }
+
         if (sdk.getLicenseStoragePath() != null && !sdk.getLicenseStoragePath().isBlank()) {
             NLicenseManager.setWritableStoragePathN(sdk.getLicenseStoragePath());
         }
@@ -98,6 +104,7 @@ public class LicenseService {
                                 + ". Start it with Bin/Linux_x86_64/Activation/run_pgd.sh start", e);
             }
         }
+
         if (!any) {
             reportObtainedStatus(sdk);
             // obtain() returning false (rather than throwing) means the licensing service
@@ -130,30 +137,22 @@ public class LicenseService {
         obtained = true;
     }
 
-    /**
-     * The modality set to put on the source - people and faces only.
-     *
-     * <p>{@code FACES} drives detection, tracking and watch-list recognition.
-     * {@code VEHICLES_AND_HUMANS} is the body detector, so somebody is still tracked while
-     * their face is turned away; its vehicle classes are filtered out of every event.
-     *
-     * <p>{@link NSurveillanceModalityType#LICENSE_PLATE_RECOGNITION} is never added. That is
-     * what keeps the plate reader out of the pipeline entirely - the modality set on the
-     * source is what decides which detectors the engine actually runs.
-     *
-     * @param wantBodyDetection whether to track people with no visible face
-     */
+    /** The modality set to put on the source - people and faces only. */
     public EnumSet<NSurveillanceModalityType> resolveModalities(boolean wantBodyDetection) {
         EnumSet<NSurveillanceModalityType> modalities = EnumSet.noneOf(NSurveillanceModalityType.class);
+
         if (facesAvailable) {
             modalities.add(NSurveillanceModalityType.FACES);
         }
+
         if (wantBodyDetection && bodiesAvailable) {
             modalities.add(NSurveillanceModalityType.VEHICLES_AND_HUMANS);
         }
+
         if (modalities.isEmpty()) {
             throw new IllegalStateException("No usable modality: the face detector is not licensed");
         }
+
         return modalities;
     }
 
@@ -164,14 +163,17 @@ public class LicenseService {
      */
     private void logLicensingEnvironment() {
         log.info("Trial mode              : {}", NLicenseManager.getTrialMode());
+
         try {
             log.info("Use HTTPS               : {}", NLicenseManager.getUseHttps());
         } catch (Exception e) {
             log.info("Use HTTPS               : <unavailable: {}>", e.toString());
         }
+
         try {
             String storage = NLicenseManager.getWritableStoragePath();
             log.info("Licence storage path    : {}", storage);
+
             if (storage != null && !storage.isBlank()) {
                 java.io.File dir = new java.io.File(storage);
                 log.info("  exists={} writable={}", dir.exists(), dir.canWrite());
@@ -179,6 +181,7 @@ public class LicenseService {
         } catch (Exception e) {
             log.info("Licence storage path    : <unavailable: {}>", e.toString());
         }
+
         // The licensing library resolves licence files against a "Licenses" directory in
         // the *application's working directory*, not the SDK folder - see Activation.pdf
         // section 4.1. Our working directory is the project root, so show what is there.
@@ -193,8 +196,9 @@ public class LicenseService {
      * activation problem. LICENSE_NOT_OBTAINED means it was reached and had nothing to
      * give - no entitlement for that component.
      */
-    private void reportObtainedStatus(SentiveillanceProperties.Sdk sdk) {
+    private void reportObtainedStatus(Sdk sdk) {
         String port = String.valueOf(sdk.getLicensePort());
+
         for (String component : COMPONENTS) {
             try {
                 NLicenseObtainedStatus status =

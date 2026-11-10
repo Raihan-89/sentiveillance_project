@@ -1,5 +1,6 @@
 package com.raihan.sentiveillance_project.live;
 
+import com.raihan.sentiveillance_project.service.RecognizedPeopleService;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
