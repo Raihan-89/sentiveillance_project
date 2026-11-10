@@ -11,6 +11,8 @@
   'use strict';
 
   var POLL_MILLIS = 2000;
+  var statusPending = false;
+  var backendOnline = false;
   /* Matches sentiveillance.live.preview-interval-millis; asking faster only wastes requests. */
   var FRAME_INTERVAL_MILLIS = 200;
   var FEED_LIMIT = 60;
@@ -91,6 +93,36 @@
     });
   }
 
+  function setText(node, value) {
+    if (node) node.textContent = value == null ? '—' : value;
+  }
+
+  function formatCount(value) {
+    return value == null ? '—' : Number(value).toLocaleString();
+  }
+
+  function setDisabled(node, disabled) { if (node) node.disabled = disabled; }
+
+  function connection(online) {
+    backendOnline = online;
+    var status = document.getElementById('connectionStatus');
+    status.className = 'connection-status ' + (online ? 'is-connected' : 'is-offline');
+    setText(document.getElementById('connectionText'), online ? 'System connected' : 'Reconnecting');
+    document.getElementById('connectionBanner').hidden = online;
+    setText(document.getElementById('apiHealth'), online ? 'Connected' : 'Connection interrupted');
+    if (!online) {
+      setDisabled(el.startBtn, true);
+      setDisabled(el.stopBtn, true);
+      el.runPill.className = 'pill';
+      setText(el.runText, 'Connection interrupted');
+      setText(document.getElementById('workspaceSync'), 'Connection lost · retrying automatically');
+    } else {
+      var sync = clockOf(new Date().toISOString());
+      setText(document.getElementById('workspaceSync'), 'Last synced ' + sync);
+      setText(document.getElementById('systemLastSync'), sync);
+    }
+  }
+
   function clockOf(iso) {
     var d = iso ? new Date(iso) : new Date();
     if (isNaN(d.getTime())) { d = new Date(); }
@@ -132,7 +164,7 @@
 
   function pollFrame() {
     // Never queue requests: if one is still in flight the next tick is simply skipped.
-    if (framePending) { return; }
+    if (!el.video || document.hidden || framePending || !sourceRunning || !backendOnline) { return; }
     framePending = true;
     fetch('api/live/frame.jpg', { cache: 'no-store' })
       .then(function (r) { return r.status === 200 ? r.blob() : null; })
@@ -152,6 +184,8 @@
      The file is uploaded because the SDK reads a path, not a browser blob: it decodes the
      video natively and keeps reading for as long as the source is attached. */
   function note(message, kind) {
+    if (!el.sourceStatus) return;
+    document.getElementById('operationNotice').hidden = !message;
     el.sourceStatus.textContent = message;
     el.sourceStatus.className = kind === 'busy' ? 'is-busy-text'
       : kind === 'error' ? 'is-error' : 'muted';
@@ -162,10 +196,10 @@
 
   function sourceBusyState(busy) {
     sourceBusy = busy;
-    el.videoFile.disabled = busy;
-    el.videoPicker.disabled = busy;
-    el.startBtn.disabled = busy || sourceRunning;
-    el.stopBtn.disabled = busy || !sourceRunning;
+    setDisabled(el.videoFile, busy);
+    setDisabled(el.videoPicker, busy);
+    setDisabled(el.startBtn, busy || sourceRunning || !backendOnline);
+    setDisabled(el.stopBtn, busy || !sourceRunning || !backendOnline);
     cameraControls();
   }
 
@@ -192,7 +226,7 @@
       return;
     }
     note((res.body.running ? 'Now playing ' : 'Selected ') + res.body.current, null);
-    el.stage.classList.remove('has-frame');
+    if (el.stage) el.stage.classList.remove('has-frame');
     loadVideoList();
     loadCameras();
     poll();
@@ -212,9 +246,19 @@
   }
 
   function loadVideoList() {
+    if (!el.videoPicker) return;
     getJson('api/source/videos').then(function (data) {
       el.videoPicker.textContent = '';
-      if (!data.videos.length) { return; }
+      renderVideoLibrary(data);
+      if (!data.videos.length) {
+        var empty = document.createElement('option');
+        empty.textContent = 'No uploaded videos yet';
+        empty.value = '';
+        el.videoPicker.appendChild(empty);
+        el.videoPicker.disabled = true;
+        return;
+      }
+      el.videoPicker.disabled = sourceBusy;
       var head = document.createElement('option');
       head.value = '';
       head.textContent = 'Switch to...';
@@ -226,7 +270,7 @@
           + (v.name === data.current ? ' - playing' : '');
         el.videoPicker.appendChild(opt);
       });
-    }).catch(function () {});
+    }).catch(function () { note('Could not load the video library. Check your connection and retry.', 'error'); });
   }
 
   /* ------------------------------------------------------------- IP cameras
@@ -261,12 +305,15 @@
   }
 
   function cameraControls() {
+    if (!el.cameraPicker) return;
     var has = Boolean(selectedCamera());
     el.cameraPicker.disabled = sourceBusy || !cameraList.length;
     el.cameraUseBtn.disabled = sourceBusy || !has;
     el.cameraTestBtn.disabled = sourceBusy || !has;
     el.cameraDeleteBtn.disabled = sourceBusy || !has;
     el.cameraAddBtn.disabled = sourceBusy;
+    var buttons = document.querySelectorAll('[data-camera-action]');
+    buttons.forEach(function (button) { button.disabled = sourceBusy; });
   }
 
   /* Describes what the SDK reported for a camera. width is 0 until the plugin has
@@ -280,9 +327,11 @@
   }
 
   function loadCameras(preferId) {
+    if (!el.cameraPicker) return Promise.resolve();
     return getJson('api/source/cameras').then(function (data) {
       cameraList = data.cameras || [];
       activeCameraId = data.activeId;
+      renderCameraLibrary();
       var wanted = preferId != null ? String(preferId) : el.cameraPicker.value;
       el.cameraPicker.textContent = '';
       if (!cameraList.length) {
@@ -297,7 +346,7 @@
           var opt = document.createElement('option');
           opt.value = String(c.id);
           opt.textContent = c.name
-            + (c.active ? ' \u2014 live' : '')
+            + (c.active ? ' \u2014 active source' : '')
             + (c.width ? ' \u00b7 ' + c.width + '\u00d7' + c.height : '')
             + (c.lastOk === false ? ' \u00b7 last attempt failed' : '');
           el.cameraPicker.appendChild(opt);
@@ -307,7 +356,10 @@
           : String(cameraList[0].id);
       }
       cameraControls();
-    }).catch(function () {});
+    }).catch(function () {
+      setText(document.getElementById('cameraCount'), 'Camera library unavailable');
+      note('Could not load saved cameras. Check your connection and reload this page.', 'error');
+    });
   }
 
   function useCamera() {
@@ -359,7 +411,9 @@
   }
 
   function showCameraForm(show) {
+    if (!el.cameraForm) return;
     el.cameraForm.hidden = !show;
+    if (el.cameraAddBtn) el.cameraAddBtn.setAttribute('aria-expanded', String(show));
     if (show) {
       formNote('', null);
       el.camUrl.focus();
@@ -415,7 +469,7 @@
         if (activate) {
           showCameraForm(false);
           note('Now playing ' + res.body.current, null);
-          el.stage.classList.remove('has-frame');
+          if (el.stage) el.stage.classList.remove('has-frame');
           poll();
         }
       })
@@ -426,10 +480,15 @@
   // --------------------------------------------------------- which pane shows
 
   function showTab(kind) {
+    if (!el.tabCamera || !el.tabVideo) return;
     sourceTab = kind;
     var camera = kind === 'IP_CAMERA';
     el.tabCamera.classList.toggle('is-active', camera);
     el.tabVideo.classList.toggle('is-active', !camera);
+    el.tabCamera.setAttribute('aria-selected', String(camera));
+    el.tabVideo.setAttribute('aria-selected', String(!camera));
+    el.tabCamera.tabIndex = camera ? 0 : -1;
+    el.tabVideo.tabIndex = camera ? -1 : 0;
     el.paneCamera.hidden = !camera;
     el.paneVideo.hidden = camera;
     if (!camera) { showCameraForm(false); }
@@ -460,7 +519,7 @@
 
   function renderSourceDetails() {
     var src = lastSource;
-    if (!src) { return; }
+    if (!src || !el.sourceDetails) { return; }
     var isCamera = src.type === 'IP_CAMERA';
     var cam = src.camera || {};
     el.sourceKind.textContent = isCamera ? 'IP camera' : 'video file';
@@ -514,6 +573,9 @@
   // -------------------------------------------------------------- event feed
 
   function addFeedRow(detection) {
+    if (!el.feed) return;
+    var placeholder = el.feed.querySelector('.feed-placeholder');
+    if (placeholder) placeholder.remove();
     var li = document.createElement('li');
 
     var tag = document.createElement('span');
@@ -547,7 +609,7 @@
   }
 
   function addShot(name, caption) {
-    if (!name || seenShots.has(name)) { return; }
+    if (!el.gallery || !name || seenShots.has(name)) { return; }
     seenShots.add(name);
 
     var fig = document.createElement('figure');
@@ -581,7 +643,7 @@
     var stream = new EventSource('api/live/events');
 
     stream.addEventListener('open', function () {
-      el.feedState.textContent = 'live';
+      setText(el.feedState, 'Live');
     });
     stream.addEventListener('detection', function (e) {
       try { onDetection(JSON.parse(e.data)); } catch (err) { /* ignore a bad frame */ }
@@ -589,41 +651,49 @@
     stream.addEventListener('candidates-changed', refreshCandidates);
     stream.addEventListener('error', function () {
       // EventSource reconnects on its own; just reflect the state.
-      el.feedState.textContent = 'reconnecting…';
+      setText(el.feedState, 'Reconnecting…');
     });
   }
 
   // ------------------------------------------------------------------ panels
 
   function renderStatus(status) {
-    el.events.textContent = status.events;
-    el.subjects.textContent = status.subjects;
-    el.identified.textContent = status.identified;
-    el.stored.textContent = status.storedEvents;
-    el.watch.textContent = status.watchListSize;
-    el.nonHuman.textContent = status.nonHumanIgnored;
+    setText(el.events, formatCount(status.events));
+    setText(el.subjects, formatCount(status.subjects));
+    setText(el.identified, formatCount(status.identified));
+    setText(el.stored, formatCount(status.storedEvents));
+    setText(el.watch, formatCount(status.watchListSize));
+    setText(el.nonHuman, formatCount(status.nonHumanIgnored));
     // Milliseconds under a second, otherwise seconds - a 4-digit ms value is unreadable.
-    el.pending.textContent = status.unknownPending;
+    setText(el.pending, formatCount(status.unknownPending));
     var lag = status.detectionLagMillis;
-    el.lag.textContent = lag == null ? '—'
-      : lag < 1000 ? lag + 'ms' : (lag / 1000).toFixed(1) + 's';
+    setText(el.lag, lag == null ? '—'
+      : lag < 1000 ? lag + ' ms' : (lag / 1000).toFixed(1) + ' s');
+    var navPending = document.getElementById('navPending');
+    setText(navPending, status.unknownPending);
+    navPending.hidden = !status.unknownPending;
+    setText(document.getElementById('queueTabCount'), status.unknownPending);
+    setText(document.getElementById('watchTabCount'), status.watchListSize);
+    setText(document.getElementById('pipelineState'), status.running ? 'Capturing' : 'Stopped');
+    setText(document.getElementById('captureHealth'), status.running ? 'Running' : 'Stopped');
 
     var running = Boolean(status.running);
     sourceRunning = running;
     el.runPill.className = 'pill ' + (running ? 'is-running' : 'is-stopped');
-    el.runText.textContent = running ? 'capturing' : 'stopped';
-    el.startBtn.disabled = sourceBusy || running;
-    el.stopBtn.disabled = sourceBusy || !running;
+    el.runText.textContent = running ? 'Capturing' : 'Stopped';
+    setDisabled(el.startBtn, sourceBusy || running);
+    setDisabled(el.stopBtn, sourceBusy || !running);
 
     // Capture no longer starts on its own, so distinguish "not started yet" from
     // "started, first frame still on its way".
+    if (!el.stageEmptyTitle) return;
     if (running) {
       el.stageEmptyTitle.textContent = 'Waiting for the first frame';
-      el.stageEmptyHint.textContent = 'Frames are only encoded while this page is open.';
+      el.stageEmptyHint.textContent = 'The source is running. Waiting for video to arrive.';
     } else {
       el.stageEmptyTitle.textContent = 'Source is stopped';
       el.stageEmptyHint.textContent = 'Press \u201cStart source\u201d to begin capturing.';
-      el.stage.classList.remove('has-frame');
+      if (el.stage) el.stage.classList.remove('has-frame');
     }
   }
 
@@ -633,25 +703,28 @@
     sourceDims.height = meta.frameHeight;
     el.sourceLine.textContent = meta.sourceName + ' · '
       + (meta.sourceType === 'IP_CAMERA' ? 'IP camera' : 'video file');
-    el.frameInfo.textContent = meta.frameWidth
-      ? meta.frameWidth + '×' + meta.frameHeight
-      : '';
+    setText(el.frameInfo, meta.frameWidth ? meta.frameWidth + ' × ' + meta.frameHeight : 'No frame yet');
+    setText(document.getElementById('systemSourceName'), meta.sourceName);
+    setText(document.getElementById('systemFrames'), Number(meta.framesEncoded || 0).toLocaleString());
+    setText(document.getElementById('systemViewers'), meta.viewers);
     renderSourceDetails();
   }
 
   function renderEmployees(list) {
+    if (!el.watchList) return;
     el.watchState.textContent = list.length + ' enrolled';
     el.watchList.textContent = '';
     if (!list.length) {
       var empty = document.createElement('p');
       empty.className = 'empty';
-      empty.textContent = 'Nobody enrolled - drop Employee_<n>_<name>.png files in the photo directory.';
+      empty.textContent = 'Your watch list is empty. Enroll a person from the review queue to start recognizing them.';
       el.watchList.appendChild(empty);
       return;
     }
     list.forEach(function (e) {
       var card = document.createElement('div');
       card.className = 'card';
+      card.dataset.search = [e.name, e.templateId, e.employeeNo].join(' ').toLowerCase();
 
       var avatar = document.createElement('div');
       avatar.className = 'avatar';
@@ -671,6 +744,7 @@
       card.appendChild(box);
       el.watchList.appendChild(card);
     });
+    applyPeopleFilter();
   }
 
   /* People the engine saw with a face but could not match. Naming one posts it straight
@@ -682,6 +756,10 @@
   var cardsById = new Map();
 
   function renderCandidates(rows) {
+    if (!el.candidates) return;
+    setText(document.getElementById('queueState'), rows.length ? rows.length + ' ready for review' : 'Queue clear');
+    var loading = el.candidates.querySelector('.empty');
+    if (loading && !cardsById.size) loading.remove();
     var seen = new Set();
 
     // Newest first in the payload, so inserting each at the top keeps that order.
@@ -713,6 +791,7 @@
     } else if (cardsById.size && placeholder) {
       placeholder.remove();
     }
+    applyPeopleFilter();
   }
 
   function candidateCard(row) {
@@ -720,7 +799,13 @@
     card.className = 'candidate';
 
     var img = document.createElement('img');
-    img.alt = 'unidentified person';
+    img.alt = 'Unidentified person';
+    img.tabIndex = 0;
+    img.setAttribute('role', 'button');
+    img.setAttribute('aria-label', 'Enlarge this face capture');
+    function enlargeFace() { if (row.snapshot && window.SentiUI.openCapture) window.SentiUI.openCapture(row.snapshot, 'Unidentified person', 'Trace ' + row.traceIndex + (row.source ? ' · ' + row.source : '')); }
+    img.addEventListener('click', enlargeFace);
+    img.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); enlargeFace(); } });
     var none = document.createElement('div');
     none.className = 'no-shot';
     none.textContent = 'no snapshot';
@@ -734,13 +819,15 @@
     meta.className = 'candidate-meta';
     card.updateCandidate = function (updated) {
       row = updated;
+      card.dataset.search = ['unknown', row.source, row.traceIndex].join(' ').toLowerCase();
       var snapshot = row.snapshot ? 'api/snapshots/' + encodeURIComponent(row.snapshot) : '';
       if (snapshot && img.getAttribute('src') !== snapshot) img.src = snapshot;
       img.hidden = !snapshot;
       none.hidden = Boolean(snapshot);
       meta.textContent = clockOf(row.seenAt) + ' · trace ' + row.traceIndex
         + ' · ' + row.templateBytes + ' B'
-        + (row.faceQuality == null ? '' : ' · quality ' + row.faceQuality);
+        + (row.faceQuality == null ? '' : ' · Quality ' + row.faceQuality)
+        + (row.source ? ' · ' + row.source : '');
     };
     card.updateCandidate(row);
 
@@ -758,7 +845,7 @@
     var save = document.createElement('button');
     save.type = 'button';
     save.className = 'btn';
-    save.textContent = 'Enrol';
+    save.textContent = 'Enroll person';
     var skip = document.createElement('button');
     skip.type = 'button';
     skip.className = 'btn btn-ghost';
@@ -796,8 +883,9 @@
     input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { enrol(); } });
     skip.addEventListener('click', function () {
       card.classList.add('is-busy');
-      fetch('api/unknown/' + row.id, { method: 'DELETE' })
-        .then(function () {
+      postJson('api/unknown/' + row.id, { method: 'DELETE' })
+        .then(function (res) {
+          if (!res.ok) { fail(res.body.error || 'Could not dismiss this capture.'); return; }
           cardsById.delete(row.id);
           card.remove();
           refreshPanels();
@@ -816,9 +904,10 @@
   var candidatesFetching = false;
   var candidatesRefreshPending = false;
   function refreshCandidates() {
+    if (!el.candidates) return;
     if (candidatesFetching) { candidatesRefreshPending = true; return; }
     candidatesFetching = true;
-    getJson('api/unknown?limit=24').then(renderCandidates).catch(function () {})
+    getJson('api/unknown?limit=200').then(renderCandidates).catch(function () { setText(document.getElementById('queueState'), 'Unable to load · retrying'); })
       .then(function () {
         candidatesFetching = false;
         if (candidatesRefreshPending) {
@@ -830,13 +919,14 @@
 
   /* After an enrol the watch list and the queue have both changed. */
   function refreshPanels() {
-    getJson('api/employees').then(renderEmployees).catch(function () {});
+    if (el.watchList) getJson('api/employees').then(renderEmployees).catch(function () { setText(el.watchState, 'Unable to load · retrying'); });
     refreshCandidates();
     poll();
   }
 
   function renderRecognized(people) {
     var container = el.recognizedPeople;
+    if (!container) return;
     el.recognizedState.textContent = people.length + ' recent ' + (people.length === 1 ? 'person' : 'people');
     if (!people.length) {
       container.textContent = '';
@@ -888,73 +978,163 @@
   }
 
   function poll() {
-    getJson('api/status').then(renderStatus).catch(function () {});
-    getJson('api/source').then(renderSource).catch(function () {});
-    getJson('api/live/meta').then(renderMeta).catch(function () {});
-    getJson('api/live/recognized').then(renderRecognized).catch(function () {
-      el.recognizedState.textContent = 'reconnecting…';
-    });
+    if (statusPending) return;
+    statusPending = true;
+    var requests = [
+      getJson('api/status').then(function (status) { connection(true); renderStatus(status); }).catch(function () { connection(false); }),
+      getJson('api/source').then(renderSource).catch(function () {}),
+      getJson('api/live/meta').then(renderMeta).catch(function () {})
+    ];
+    if (el.recognizedPeople) requests.push(getJson('api/live/recognized').then(renderRecognized).catch(function () {
+      setText(el.recognizedState, 'Reconnecting…');
+    }));
+    return Promise.all(requests).then(function () { statusPending = false; });
   }
 
   function control(path) {
     return function () {
-      el.startBtn.disabled = true;
-      el.stopBtn.disabled = true;
-      fetch(path, { method: 'POST' })
-        .then(poll)
-        .catch(poll);
+      setDisabled(el.startBtn, true);
+      setDisabled(el.stopBtn, true);
+      postJson(path, { method: 'POST' }).then(function (res) {
+        if (!res.ok) note(res.body.error || 'The source could not be updated.', 'error');
+        poll();
+      }).catch(function () { note('Could not reach the source. Please retry.', 'error'); poll(); });
     };
   }
 
-  // -------------------------------------------------------------------- boot
+  function applyPeopleFilter() {
+    var search = document.getElementById('peopleSearch');
+    if (!search) return;
+    var query = search.value.trim().toLowerCase();
+    var active = document.getElementById('watchPanel').hidden ? el.candidates : el.watchList;
+    if (!active) return;
+    var cards = active.querySelectorAll('.candidate, .card');
+    var visible = 0;
+    cards.forEach(function (card) {
+      card.hidden = Boolean(query && (card.dataset.search || '').indexOf(query) < 0);
+      if (!card.hidden) visible++;
+    });
+    document.getElementById('peopleNoResults').hidden = !query || !cards.length || visible > 0;
+  }
 
-  el.videoFile.addEventListener('change', function () {
-    if (this.files && this.files[0]) {
-      uploadVideo(this.files[0]);
-      this.value = '';            // so re-picking the same file fires change again
+  function renderCameraLibrary() {
+    var library = document.getElementById('cameraLibrary');
+    if (!library) return;
+    setText(document.getElementById('cameraCount'), cameraList.length + ' saved ' + (cameraList.length === 1 ? 'camera' : 'cameras'));
+    library.textContent = '';
+    if (!cameraList.length) {
+      var empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.innerHTML = window.SentiUI.icon('camera') + '<h3>No cameras connected yet</h3><p>Add your first IP camera, test its connection, then activate it to start monitoring.</p>';
+      library.appendChild(empty);
+      return;
     }
+    cameraList.forEach(function (camera) {
+      var row = document.createElement('article');
+      row.className = 'camera-list-item';
+      var symbol = document.createElement('span');
+      symbol.className = 'camera-item-icon';
+      symbol.innerHTML = window.SentiUI.icon('camera');
+      var content = document.createElement('div');
+      content.className = 'camera-item-content';
+      var title = document.createElement('div');
+      title.className = 'camera-item-name';
+      var name = document.createElement('span');
+      name.textContent = camera.name;
+      title.appendChild(name);
+      var badge = document.createElement('span');
+      badge.className = 'badge ' + (camera.active ? 'badge-success' : camera.lastOk === false ? 'badge-danger' : 'badge-neutral');
+      badge.textContent = camera.active ? 'Active source' : camera.lastOk === false ? 'Test failed' : camera.lastOk ? 'Last test passed' : 'Saved';
+      title.appendChild(badge);
+      var detail = document.createElement('p');
+      detail.textContent = [camera.url, camera.width ? describeCamera(camera) : 'Stream details available after capture starts'].filter(Boolean).join(' · ');
+      content.appendChild(title); content.appendChild(detail);
+      var actions = document.createElement('div');
+      actions.className = 'camera-item-actions';
+      ['Test', 'Activate'].forEach(function (label) {
+        var button = document.createElement('button');
+        button.type = 'button'; button.className = 'btn btn-ghost'; button.textContent = label;
+        button.dataset.cameraAction = label.toLowerCase();
+        button.setAttribute('aria-label', label + ' ' + camera.name);
+        button.disabled = sourceBusy;
+        button.addEventListener('click', function () {
+          el.cameraPicker.value = String(camera.id);
+          if (label === 'Test') testCamera(); else useCamera();
+        });
+        actions.appendChild(button);
+      });
+      row.appendChild(symbol); row.appendChild(content); row.appendChild(actions);
+      library.appendChild(row);
+    });
+  }
+
+  function renderVideoLibrary(data) {
+    var library = document.getElementById('videoLibrary');
+    if (!library) return;
+    library.textContent = '';
+    data.videos.forEach(function (video) {
+      var row = document.createElement('div'); row.className = 'video-file-row';
+      row.innerHTML = window.SentiUI.icon('video');
+      var body = document.createElement('div');
+      var name = document.createElement('strong'); name.textContent = video.name;
+      var size = document.createElement('small'); size.textContent = Math.round(video.bytes / 1048576) + ' MB' + (video.name === data.current ? ' · Current source' : '');
+      body.appendChild(name); body.appendChild(size);
+      var play = document.createElement('button'); play.type = 'button'; play.className = 'btn btn-ghost'; play.textContent = 'Play';
+      play.setAttribute('aria-label', 'Play ' + video.name);
+      play.addEventListener('click', function () { if (!sourceBusy) { el.videoPicker.value = video.name; el.videoPicker.dispatchEvent(new Event('change')); } });
+      row.appendChild(body); row.appendChild(play); library.appendChild(row);
+    });
+  }
+
+  // -------------------------------------------------------------------- boot
+  function on(node, event, handler) { if (node) node.addEventListener(event, handler); }
+  on(el.videoFile, 'change', function () {
+    if (this.files && this.files[0]) { uploadVideo(this.files[0]); this.value = ''; }
   });
-  el.videoPicker.addEventListener('change', function () {
+  on(el.videoPicker, 'change', function () {
     var name = this.value;
-    if (!name || sourceBusy) { return; }
+    if (!name || sourceBusy) return;
     sourceBusyState(true);
-    note('Switching to ' + name + '...', 'busy');
+    note('Switching to ' + name + '…', 'busy');
     postJson('api/source/video/' + encodeURIComponent(name), { method: 'POST' })
-      .then(afterSwitch)
-      .catch(function () { note('Could not switch video.', 'error'); })
+      .then(afterSwitch).catch(function () { note('Could not switch video.', 'error'); })
       .then(function () { sourceBusyState(false); });
   });
-
-  el.tabVideo.addEventListener('click', function () { tabChosen = true; showTab('VIDEO_FILE'); });
-  el.tabCamera.addEventListener('click', function () { tabChosen = true; showTab('IP_CAMERA'); });
-  el.cameraPicker.addEventListener('change', cameraControls);
-  el.cameraUseBtn.addEventListener('click', useCamera);
-  el.cameraTestBtn.addEventListener('click', testCamera);
-  el.cameraDeleteBtn.addEventListener('click', deleteCamera);
-  el.cameraAddBtn.addEventListener('click', function () { showCameraForm(el.cameraForm.hidden); });
-  el.camTestBtn.addEventListener('click', testNewCamera);
-  el.camSaveBtn.addEventListener('click', function () { saveCamera(false); });
-  el.camSaveUseBtn.addEventListener('click', function () { saveCamera(true); });
-  el.camCancelBtn.addEventListener('click', function () { showCameraForm(false); });
-
-  el.startBtn.addEventListener('click', control('api/surveillance/start'));
-  el.stopBtn.addEventListener('click', control('api/surveillance/stop'));
-
-  startVideo();
-  openStream();
+  on(el.tabVideo, 'click', function () { tabChosen = true; showTab('VIDEO_FILE'); });
+  on(el.tabCamera, 'click', function () { tabChosen = true; showTab('IP_CAMERA'); });
+  [el.tabVideo, el.tabCamera].forEach(function (tab) {
+    on(tab, 'keydown', function (event) {
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        event.preventDefault();
+        var next = tab === el.tabCamera ? el.tabVideo : el.tabCamera;
+        next.click(); next.focus();
+      }
+    });
+  });
+  on(el.cameraPicker, 'change', cameraControls);
+  on(el.cameraUseBtn, 'click', useCamera);
+  on(el.cameraTestBtn, 'click', testCamera);
+  on(el.cameraDeleteBtn, 'click', deleteCamera);
+  on(el.cameraAddBtn, 'click', function () { showCameraForm(el.cameraForm.hidden); });
+  on(el.camTestBtn, 'click', testNewCamera);
+  on(el.camSaveBtn, 'click', function () { saveCamera(false); });
+  on(el.camSaveUseBtn, 'click', function () { saveCamera(true); });
+  on(el.camCancelBtn, 'click', function () { showCameraForm(false); el.cameraAddBtn.focus(); });
+  on(el.cameraForm, 'submit', function (event) { event.preventDefault(); saveCamera(false); });
+  on(el.startBtn, 'click', control('api/surveillance/start'));
+  on(el.stopBtn, 'click', control('api/surveillance/stop'));
+  on(document.getElementById('peopleSearch'), 'input', applyPeopleFilter);
+  document.addEventListener('sv:people-tab', applyPeopleFilter);
+  if (el.cameraPicker) showTab('IP_CAMERA');
+  if (el.video) startVideo();
+  if (el.feed || el.candidates) openStream();
   poll();
-  setInterval(poll, POLL_MILLIS);
-
-  refreshPanels();
+  setInterval(function () { if (!document.hidden) poll(); }, POLL_MILLIS);
+  if (el.watchList) refreshPanels();
   loadVideoList();
   loadCameras();
-  /* Refresh early captures promptly without rebuilding existing name inputs. */
-  setInterval(function () {
-    refreshCandidates();
-  }, 1000);
-  /* The feed and the gallery are deliberately NOT seeded from /api/detections. They used to
-     be, which made a refresh look like cached output: those rows come from PostgreSQL, so
-     old events reappeared on every reload. Both panels now show only what arrives live over
-     SSE from the moment the page opens. The stored history is still queryable via
-     /api/detections. */
+  if (el.candidates) setInterval(function () { if (!document.hidden) refreshCandidates(); }, 1000);
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) { poll(); refreshCandidates(); }
+  });
 }());

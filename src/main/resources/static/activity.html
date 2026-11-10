@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="SentiVeillance operations console: monitor live sources, manage cameras and review people.">
+  <title>Activity · SentiVeillance</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <script>try { document.documentElement.dataset.theme = localStorage.getItem('sv-theme') === 'dark' ? 'dark' : 'light'; } catch (e) {}</script>
+  <link rel="stylesheet" href="app.css?v=2">
+  <script src="shell.js?v=2" defer></script>
+  <script src="app.js?v=2" defer></script>
+  <script src="pages.js?v=2" defer></script>
+</head>
+<body data-page="activity">
+<a class="skip-link" href="#mainContent">Skip to content</a>
+<div id="appShell"></div>
+<main class="workspace" id="mainContent" tabindex="-1"><div class="connection-banner" id="connectionBanner" role="status" hidden>Connection interrupted. Reconnecting automatically…</div><div class="operation-notice" id="operationNotice" role="status" aria-live="polite" hidden><span id="sourceStatus"></span><button id="dismissNotice" type="button" class="icon-button" aria-label="Dismiss notification"><svg class="icon " aria-hidden="true"><use href="#i-close"></use></svg></button></div>
+<div class="page-heading"><div><p class="eyebrow">Detection history</p><h1>Activity</h1><p class="page-description">Review saved detections and the best captures from completed visits.</p></div><div class="page-actions"><button class="btn btn-ghost" id="refreshActivity" type="button"><svg class="icon " aria-hidden="true"><use href="#i-refresh"></use></svg>Refresh activity</button></div></div><section class="panel activity-panel"><div class="panel-head"><div><h2>Detection log</h2><p>Saved events from the latest 200 records</p></div><span class="badge badge-neutral" id="activityState">Loading</span></div><div class="filter-toolbar"><label class="search-field"><svg class="icon " aria-hidden="true"><use href="#i-search"></use></svg><input id="activitySearch" type="search" placeholder="Search person, source or trace…" aria-label="Search detection history"></label><label class="filter-select"><span>Identity</span><select id="identityFilter"><option value="all">All people</option><option value="known">Identified</option><option value="unknown">Unknown</option></select></label><label class="filter-select"><span>Event</span><select id="eventFilter"><option value="all">All events</option><option value="SUBJECT_APPEARED">Appeared</option><option value="SUBJECT_TRACK">Tracked</option><option value="SUBJECT_DISAPPEARED">Left frame</option></select></label></div><div class="table-scroll"><table class="data-table"><caption class="sr-only">Recent saved face detection events</caption><thead><tr><th>Person</th><th>Event</th><th>Source</th><th>Time</th><th>Match score</th><th>Capture</th></tr></thead><tbody id="activityRows"><tr><td colspan="6"><div class="empty">Loading saved activity…</div></td></tr></tbody></table></div><div class="table-footer"><span id="activityCount">Loading records…</span><div class="pagination"><button class="icon-button" id="activityPrev" type="button" aria-label="Previous page" disabled><svg class="icon " aria-hidden="true"><use href="#i-chevron-left"></use></svg></button><span id="activityPage">Page 1</span><button class="icon-button" id="activityNext" type="button" aria-label="Next page" disabled><svg class="icon " aria-hidden="true"><use href="#i-chevron-right"></use></svg></button></div></div></section>
+<section class="panel captures-panel"><div class="panel-head"><div><h2>Recent captures</h2><p>Best frames from completed visits in the loaded history</p></div><span class="badge badge-neutral" id="captureCount">—</span></div><div class="gallery" id="historyGallery"><div class="empty">Loading captures…</div></div></section>
+<footer class="workspace-footer"><span>SentiVeillance <span class="footer-divider">/</span> Operations workspace</span><span id="workspaceSync">Connecting to your system…</span></footer>
+</main>
+<dialog id="captureDialog" class="capture-dialog"><div class="dialog-heading"><h2 id="captureDialogTitle">Face capture</h2><button class="icon-button" id="closeCapture" type="button" aria-label="Close capture"><svg class="icon " aria-hidden="true"><use href="#i-close"></use></svg></button></div><img id="captureDialogImage" alt="Selected detection capture"><p id="captureDialogCaption"></p></dialog>
+<noscript><div class="noscript-notice">JavaScript is required to view live sources and manage this workspace.</div></noscript>
+</body>
+</html>

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="SentiVeillance operations console: monitor live sources, manage cameras and review people.">
+  <title>Sources · SentiVeillance</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <script>try { document.documentElement.dataset.theme = localStorage.getItem('sv-theme') === 'dark' ? 'dark' : 'light'; } catch (e) {}</script>
+  <link rel="stylesheet" href="app.css?v=2">
+  <script src="shell.js?v=2" defer></script>
+  <script src="app.js?v=2" defer></script>
+  <script src="pages.js?v=2" defer></script>
+</head>
+<body data-page="sources">
+<a class="skip-link" href="#mainContent">Skip to content</a>
+<div id="appShell"></div>
+<main class="workspace" id="mainContent" tabindex="-1"><div class="connection-banner" id="connectionBanner" role="status" hidden>Connection interrupted. Reconnecting automatically…</div><div class="operation-notice" id="operationNotice" role="status" aria-live="polite" hidden><span id="sourceStatus"></span><button id="dismissNotice" type="button" class="icon-button" aria-label="Dismiss notification"><svg class="icon " aria-hidden="true"><use href="#i-close"></use></svg></button></div>
+<div class="page-heading"><div><p class="eyebrow">Source management</p><h1>Sources</h1><p class="page-description">Connect your cameras, test their streams, and choose what to monitor.</p></div><div class="page-actions"><a class="btn btn-ghost" href="index.html"><svg class="icon " aria-hidden="true"><use href="#i-monitor"></use></svg>Go to monitor</a></div></div><div class="info-strip"><svg class="icon " aria-hidden="true"><use href="#i-info"></use></svg><span>One source is active at a time. Testing a camera keeps the current source running.</span></div><div class="sources-grid"><section class="panel source-management"><div class="panel-head"><div><h2>Source library</h2><p>Manage IP cameras and uploaded videos</p></div></div>
+<div class="source-tabs seg" role="tablist" aria-label="Source type"><button class="seg-btn is-active" id="tabCamera" type="button" role="tab" aria-selected="true" aria-controls="paneCamera"><svg class="icon " aria-hidden="true"><use href="#i-camera"></use></svg>IP cameras</button><button class="seg-btn" id="tabVideo" type="button" role="tab" aria-selected="false" aria-controls="paneVideo"><svg class="icon " aria-hidden="true"><use href="#i-video"></use></svg>Video files</button></div>
+<div id="paneCamera" role="tabpanel" aria-labelledby="tabCamera"><div class="library-toolbar"><div><h3>Saved cameras</h3><p id="cameraCount">Loading your cameras…</p></div><button class="btn" id="cameraAddBtn" type="button"><svg class="icon " aria-hidden="true"><use href="#i-plus"></use></svg>Add camera</button></div>
+<div class="camera-selection"><label for="cameraPicker">Selected camera</label><select class="picker picker-wide" id="cameraPicker" aria-label="Saved IP cameras"><option>Loading cameras…</option></select><div class="selection-actions"><button class="btn" id="cameraUseBtn" type="button" disabled><svg class="icon " aria-hidden="true"><use href="#i-play"></use></svg>Activate</button><button class="btn btn-ghost" id="cameraTestBtn" type="button" disabled><svg class="icon " aria-hidden="true"><use href="#i-signal"></use></svg>Test connection</button><button class="btn btn-danger-ghost" id="cameraDeleteBtn" type="button" disabled><svg class="icon " aria-hidden="true"><use href="#i-trash"></use></svg>Remove</button></div></div>
+    <form class="camera-form" id="cameraForm" hidden autocomplete="off"><div class="form-intro"><h3>Add an IP camera</h3><p>Enter a stream URL, or use the connection fields below for a Dahua camera.</p></div>
+      <div class="field field-wide">
+        <label for="camUrl">Stream URL (optional)</label>
+        <input id="camUrl" type="text" spellcheck="false"
+               placeholder="rtsp://user:pass@192.168.1.108:554/cam/realmonitor?channel=1&amp;subtype=0">
+      </div>
+      <div class="field">
+        <label for="camName">Name</label>
+        <input id="camName" type="text" placeholder="gate-camera">
+      </div>
+      <p class="form-hint">
+        Leave the URL empty to build a Dahua URL from the parts below. A password containing
+        <code>@</code> or <code>:</code> is percent-encoded for you.
+      </p>
+      <div class="field"><label for="camHost">Host or IP</label><input id="camHost" type="text" placeholder="192.168.1.108"></div>
+      <div class="field"><label for="camPort">RTSP port</label><input id="camPort" type="number" min="1" max="65535" value="554"></div>
+      <div class="field"><label for="camUser">User</label><input id="camUser" type="text" autocomplete="off"></div>
+      <div class="field"><label for="camPass">Password</label><input id="camPass" type="password" autocomplete="new-password"></div>
+      <div class="field"><label for="camChannel">Channel</label><input id="camChannel" type="number" min="1" value="1"></div>
+      <div class="field">
+        <label for="camSubtype">Stream</label>
+        <select id="camSubtype">
+          <option value="0">0 &mdash; main stream</option>
+          <option value="1">1 &mdash; sub stream</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="camFlags" title="Which backend the SDK's Media plugin uses to decode">Decoder</label>
+        <select id="camFlags">
+          <option value="">SDK default</option>
+          <option value="DoNotUseVlc">Force FFmpeg</option>
+          <option value="DoNotUseFFmpeg">Force VLC</option>
+          <option value="PreferVlc">Prefer VLC</option>
+        </select>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-ghost btn-sm" id="camTestBtn" type="button">Test</button>
+        <button class="btn btn-ghost btn-sm" id="camSaveBtn" type="button">Save</button>
+        <button class="btn btn-sm" id="camSaveUseBtn" type="button">Save &amp; activate</button>
+        <button class="btn btn-ghost btn-sm" id="camCancelBtn" type="button">Cancel</button>
+        <span class="muted" id="cameraFormStatus" role="status" aria-live="polite"></span>
+      </div>
+    </form>
+<div class="camera-library" id="cameraLibrary"><div class="empty">Loading camera library…</div></div></div>
+<div id="paneVideo" role="tabpanel" aria-labelledby="tabVideo" hidden><div class="library-toolbar"><div><h3>Video library</h3><p>Upload a file to start playback, or replay a saved video.</p></div></div><label class="upload-zone" for="videoFile"><svg class="icon " aria-hidden="true"><use href="#i-upload"></use></svg><strong>Choose a video to upload</strong><span>MP4, AVI, MKV, MOV and other supported formats · up to 2 GB</span><span class="btn btn-ghost">Browse files</span><input type="file" id="videoFile" accept="video/*,.mp4,.avi,.mkv,.mov,.m4v,.mpg,.mpeg,.wmv,.flv,.webm,.ts" hidden></label><div class="saved-video-picker"><label for="videoPicker">Replay an uploaded video</label><select class="picker" id="videoPicker"><option value="">Loading videos…</option></select></div><div id="videoLibrary" class="video-library"></div></div></section>
+<aside class="live-sidebar"><section class="panel"><div class="panel-head"><div><h2>Source details</h2><p>Current connection and stream information</p></div><span class="badge badge-neutral" id="sourceKind">Waiting</span></div><dl class="details" id="sourceDetails"><div><dt>Status</dt><dd>Waiting for source information…</dd></div></dl></section><section class="panel guidance-panel"><span class="callout-icon"><svg class="icon " aria-hidden="true"><use href="#i-camera"></use></svg></span><h3>A better view starts here</h3><p>Use the main stream for clearer faces. Position the camera so people face it, with even lighting and minimal motion blur.</p><a href="index.html">Check the live view <svg class="icon " aria-hidden="true"><use href="#i-arrow"></use></svg></a></section></aside></div>
+<footer class="workspace-footer"><span>SentiVeillance <span class="footer-divider">/</span> Operations workspace</span><span id="workspaceSync">Connecting to your system…</span></footer>
+</main>
+<dialog id="captureDialog" class="capture-dialog"><div class="dialog-heading"><h2 id="captureDialogTitle">Face capture</h2><button class="icon-button" id="closeCapture" type="button" aria-label="Close capture"><svg class="icon " aria-hidden="true"><use href="#i-close"></use></svg></button></div><img id="captureDialogImage" alt="Selected detection capture"><p id="captureDialogCaption"></p></dialog>
+<noscript><div class="noscript-notice">JavaScript is required to view live sources and manage this workspace.</div></noscript>
+</body>
+</html>

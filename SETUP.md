@@ -360,12 +360,12 @@ ffprobe -rtsp_transport tcp "rtsp://USER:PASS@CAMERA_IP:554/cam/realmonitor?chan
 
 Two ways, and neither needs a code change.
 
-**From the dashboard (no restart).** Live view → **IP camera** → **Add camera…**. Paste the
+**From the dashboard (no restart).** **Sources** → **IP cameras** → **Add camera**. Paste the
 full RTSP URL, or leave the URL empty and fill in host / port / user / password / channel /
 stream and let the app assemble the Dahua URL — a password containing `@` or `:` is
 percent-encoded for you, which is the single most common reason a camera that works in its
 own web UI refuses to open over RTSP. **Test** connects, reports what answered and
-disconnects again without disturbing whatever is playing; **Save & use** makes it the live
+disconnects again without disturbing whatever is playing; **Save & activate** makes it the live
 source. Saved cameras persist in the `ip_camera` table, so they are still there after a
 restart.
 
@@ -442,15 +442,35 @@ To re-extract templates for people already enrolled (after changing
 `faces.template-size`, or replacing a photo), set
 `sentiveillance.enrollment.re-enroll-existing=true` for one run, then set it back.
 
+### Web workspace
+
+Open `http://localhost:8080/`. The frontend has five separate pages with shared navigation:
+
+| Page | Address | Purpose |
+|---|---|---|
+| Live monitor | `/index.html` (or `/`) | Start/stop capture, watch the live feed, recent recognized faces and live events |
+| Sources | `/sources.html` | Add, test, activate and remove cameras; upload or replay videos |
+| People | `/people.html` | Review unknown faces, enroll people, and search the watch list |
+| Activity | `/activity.html` | Search/filter the latest 200 stored detections, paginate, and enlarge saved captures |
+| System status | `/system.html` | Read capture health, counters and active source details |
+
+The sidebar shows the active source and capture status on every page. The appearance
+switch saves a light/dark preference in this browser. On mobile, use the menu button to
+open navigation. Activity is read-only; camera actions and enrollment use the existing API.
+Live preview requests run only on the monitor page and pause while the browser tab is hidden.
+The detection engine continues processing independently of navigation. No frontend package
+installation or separate frontend server is required. After upgrading, restart the application
+and refresh the browser so Spring Boot serves the updated static resources.
+
 ### Switch between the video file and the camera
 
-The **Live view** panel has a **Video file / IP camera** switch. Both kinds of source go
+The **Sources** page has **Video files / IP cameras** tabs. Both kinds of source go
 through the same door in the SDK — the `Media` device plugin, with a `FileName` parameter for
 a file and a `Url` parameter for a camera — so switching between them keeps the watch list,
 the thresholds and the counters exactly as they are. A failed switch restores the previous
 source.
 
-**Video file.** **Choose video** imports a video from your computer; the engine switches to it
+**Video files.** **Browse files** imports a video from your computer; the engine switches to it
 and starts capture once the upload finishes. The dropdown replays previously uploaded videos
 without another upload. Files are kept in `sentiveillance.source.uploads-directory` (default
 `var/uploads`) with unique filenames, so importing another file with the same name does not
@@ -462,7 +482,7 @@ default to a 2 GB multipart limit; adjust `spring.servlet.multipart.max-file-siz
 **IP camera.** The dropdown lists saved cameras, with what each one reported the last time it
 answered. **Test** connects through the SDK, reports resolution / frame rate / codec, and
 disconnects — the live source is untouched, so it is safe to test one camera while another is
-running. **Use** makes the selected camera the live source. **Remove** deletes it from the
+running. **Activate** makes the selected camera the live source. **Remove** deletes it from the
 list, and refuses while it is the live source. Cameras live in the `ip_camera` table and
 survive a restart; the one in `application.properties` is added to the list automatically.
 

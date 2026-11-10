@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="SentiVeillance operations console: monitor live sources, manage cameras and review people.">
+  <title>People · SentiVeillance</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <script>try { document.documentElement.dataset.theme = localStorage.getItem('sv-theme') === 'dark' ? 'dark' : 'light'; } catch (e) {}</script>
+  <link rel="stylesheet" href="app.css?v=2">
+  <script src="shell.js?v=2" defer></script>
+  <script src="app.js?v=2" defer></script>
+  <script src="pages.js?v=2" defer></script>
+</head>
+<body data-page="people">
+<a class="skip-link" href="#mainContent">Skip to content</a>
+<div id="appShell"></div>
+<main class="workspace" id="mainContent" tabindex="-1"><div class="connection-banner" id="connectionBanner" role="status" hidden>Connection interrupted. Reconnecting automatically…</div><div class="operation-notice" id="operationNotice" role="status" aria-live="polite" hidden><span id="sourceStatus"></span><button id="dismissNotice" type="button" class="icon-button" aria-label="Dismiss notification"><svg class="icon " aria-hidden="true"><use href="#i-close"></use></svg></button></div>
+<div class="page-heading"><div><p class="eyebrow">Identity management</p><h1>People</h1><p class="page-description">Review unknown faces and manage your enrolled watch list.</p></div><div class="page-actions"><a class="btn btn-ghost" href="index.html"><svg class="icon " aria-hidden="true"><use href="#i-monitor"></use></svg>Back to monitor</a></div></div><section class="stats-grid stats-grid-three" aria-label="People statistics"><article class="stat-card"><div class="stat-top"><span>Awaiting review</span><span class="stat-icon"><svg class="icon " aria-hidden="true"><use href="#i-user-plus"></use></svg></span></div><strong id="mPending">—</strong><span class="stat-description">Ready to identify and enroll</span></article><article class="stat-card"><div class="stat-top"><span>Enrolled people</span><span class="stat-icon"><svg class="icon " aria-hidden="true"><use href="#i-users"></use></svg></span></div><strong id="mWatch">—</strong><span class="stat-description">Stored in the active watch list</span></article><article class="stat-card"><div class="stat-top"><span>Identified visits</span><span class="stat-icon"><svg class="icon " aria-hidden="true"><use href="#i-check"></use></svg></span></div><strong id="mIdentified">—</strong><span class="stat-description">Recognized in this session</span></article></section><section class="panel"><div class="people-toolbar"><div class="page-tabs" role="tablist" aria-label="People views"><button class="page-tab is-active" id="queueTab" type="button" role="tab" aria-selected="true" aria-controls="queuePanel" data-panel="queuePanel">Review queue <span id="queueTabCount" class="count-badge">—</span></button><button class="page-tab" id="watchTab" type="button" role="tab" aria-selected="false" aria-controls="watchPanel" data-panel="watchPanel">Watch list <span id="watchTabCount" class="count-badge">—</span></button></div><label class="search-field"><svg class="icon " aria-hidden="true"><use href="#i-search"></use></svg><input type="search" id="peopleSearch" aria-label="Search people by name, template, source or trace" placeholder="Search people, source or trace…"></label></div>
+<div id="queuePanel" role="tabpanel" aria-labelledby="queueTab"><div class="section-intro"><div><h2>Unidentified people</h2><p>Name a person to enroll them. Better captures update their existing card automatically.</p></div><span class="badge badge-neutral" id="queueState">Loading queue</span></div><div class="candidates" id="candidates"><div class="empty"><h3>Loading review queue…</h3><p>Fetching the latest unknown faces.</p></div></div></div>
+<div id="watchPanel" role="tabpanel" aria-labelledby="watchTab" hidden><div class="section-intro"><div><h2>Enrolled watch list</h2><p>These identities are available for live recognition.</p></div><span class="badge badge-neutral" id="watchState">Loading</span></div><div class="cards" id="watchList"><div class="empty">Loading enrolled people…</div></div></div><div class="empty" id="peopleNoResults" hidden><h3>No matching people</h3><p>Try a different name, source, template ID or trace number.</p></div></section>
+<div class="workspace-note"><svg class="icon " aria-hidden="true"><use href="#i-shield"></use></svg><p>Enrollment uses the face template captured by the camera. A new photo or application restart is not required.</p></div>
+<footer class="workspace-footer"><span>SentiVeillance <span class="footer-divider">/</span> Operations workspace</span><span id="workspaceSync">Connecting to your system…</span></footer>
+</main>
+<dialog id="captureDialog" class="capture-dialog"><div class="dialog-heading"><h2 id="captureDialogTitle">Face capture</h2><button class="icon-button" id="closeCapture" type="button" aria-label="Close capture"><svg class="icon " aria-hidden="true"><use href="#i-close"></use></svg></button></div><img id="captureDialogImage" alt="Selected detection capture"><p id="captureDialogCaption"></p></dialog>
+<noscript><div class="noscript-notice">JavaScript is required to view live sources and manage this workspace.</div></noscript>
+</body>
+</html>
