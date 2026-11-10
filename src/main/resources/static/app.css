@@ -380,6 +380,8 @@ label.btn { cursor: pointer; }
   font-size: 12px;
 }
 
+.candidate img[hidden], .candidate .no-shot[hidden] { display: none; }
+
 .candidate-body { display: flex; flex-direction: column; gap: 7px; padding: 10px; }
 .candidate-meta { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 

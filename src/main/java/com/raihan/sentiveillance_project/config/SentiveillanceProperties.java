@@ -269,9 +269,8 @@ public class SentiveillanceProperties {
         /** Re-extract templates for employees already stored in the database. */
         private boolean reEnrollExisting = false;
         /**
-         * Keep the face template of anybody who leaves the frame unidentified, so they can be
-         * named from the dashboard and enrolled without a photograph. Only tracks that
-         * actually produced a face are kept.
+         * Queue usable unknown faces while visible, matching pending identities across visits
+         * and replacing their saved image/template only when face quality improves.
          */
         private boolean captureUnknownSubjects = true;
     }

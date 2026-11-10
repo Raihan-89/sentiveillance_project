@@ -586,6 +586,7 @@
     stream.addEventListener('detection', function (e) {
       try { onDetection(JSON.parse(e.data)); } catch (err) { /* ignore a bad frame */ }
     });
+    stream.addEventListener('candidates-changed', refreshCandidates);
     stream.addEventListener('error', function () {
       // EventSource reconnects on its own; just reflect the state.
       el.feedState.textContent = 'reconnecting…';
@@ -676,11 +677,8 @@
      into the running watch list, so recognition starts on their next appearance - there is
      no photo to supply and no restart. */
   /* Cards are reconciled by id, never rebuilt.
-     This panel is re-read every 10s because a new candidate only appears when somebody
-     leaves the frame and no live event announces it. Clearing the container and recreating
-     every card made that refresh destroy the <input> you were typing into - the name
-     vanished a few seconds after you started. Existing cards are now left in place, so the
-     text you have typed survives; only genuinely new or departed candidates are touched. */
+     Queue-change events refresh immediately; a timer covers reconnects. Existing cards
+     update their image and quality in place, preserving the name currently being typed. */
   var cardsById = new Map();
 
   function renderCandidates(rows) {
@@ -693,6 +691,8 @@
         var card = candidateCard(row);
         cardsById.set(row.id, card);
         el.candidates.insertBefore(card, el.candidates.firstChild);
+      } else {
+        cardsById.get(row.id).updateCandidate(row);
       }
     });
 
@@ -708,7 +708,7 @@
       var empty = document.createElement('p');
       empty.className = 'empty';
       empty.textContent = 'Nobody waiting. Unmatched people with a usable face appear here '
-        + 'when they leave the frame.';
+        + 'as soon as a usable template is captured.';
       el.candidates.appendChild(empty);
     } else if (cardsById.size && placeholder) {
       placeholder.remove();
@@ -719,26 +719,30 @@
     var card = document.createElement('div');
     card.className = 'candidate';
 
-    if (row.snapshot) {
-      var img = document.createElement('img');
-      img.src = 'api/snapshots/' + encodeURIComponent(row.snapshot);
-      img.alt = 'unidentified person, trace ' + row.traceIndex;
-      img.loading = 'lazy';
-      card.appendChild(img);
-    } else {
-      var none = document.createElement('div');
-      none.className = 'no-shot';
-      none.textContent = 'no snapshot';
-      card.appendChild(none);
-    }
+    var img = document.createElement('img');
+    img.alt = 'unidentified person';
+    var none = document.createElement('div');
+    none.className = 'no-shot';
+    none.textContent = 'no snapshot';
+    card.appendChild(img);
+    card.appendChild(none);
 
     var body = document.createElement('div');
     body.className = 'candidate-body';
 
     var meta = document.createElement('div');
     meta.className = 'candidate-meta';
-    meta.textContent = clockOf(row.seenAt) + ' · trace ' + row.traceIndex
-      + ' · ' + row.templateBytes + ' B';
+    card.updateCandidate = function (updated) {
+      row = updated;
+      var snapshot = row.snapshot ? 'api/snapshots/' + encodeURIComponent(row.snapshot) : '';
+      if (snapshot && img.getAttribute('src') !== snapshot) img.src = snapshot;
+      img.hidden = !snapshot;
+      none.hidden = Boolean(snapshot);
+      meta.textContent = clockOf(row.seenAt) + ' · trace ' + row.traceIndex
+        + ' · ' + row.templateBytes + ' B'
+        + (row.faceQuality == null ? '' : ' · quality ' + row.faceQuality);
+    };
+    card.updateCandidate(row);
 
     var input = document.createElement('input');
     input.type = 'text';
@@ -809,10 +813,25 @@
     return card;
   }
 
+  var candidatesFetching = false;
+  var candidatesRefreshPending = false;
+  function refreshCandidates() {
+    if (candidatesFetching) { candidatesRefreshPending = true; return; }
+    candidatesFetching = true;
+    getJson('api/unknown?limit=24').then(renderCandidates).catch(function () {})
+      .then(function () {
+        candidatesFetching = false;
+        if (candidatesRefreshPending) {
+          candidatesRefreshPending = false;
+          refreshCandidates();
+        }
+      });
+  }
+
   /* After an enrol the watch list and the queue have both changed. */
   function refreshPanels() {
     getJson('api/employees').then(renderEmployees).catch(function () {});
-    getJson('api/unknown?limit=24').then(renderCandidates).catch(function () {});
+    refreshCandidates();
     poll();
   }
 
@@ -929,11 +948,10 @@
   refreshPanels();
   loadVideoList();
   loadCameras();
-  /* The queue is re-read on a slow timer as well: new candidates only appear when somebody
-     leaves the frame, which no live event announces. */
+  /* Refresh early captures promptly without rebuilding existing name inputs. */
   setInterval(function () {
-    getJson('api/unknown?limit=24').then(renderCandidates).catch(function () {});
-  }, 10000);
+    refreshCandidates();
+  }, 1000);
   /* The feed and the gallery are deliberately NOT seeded from /api/detections. They used to
      be, which made a refresh look like cached output: those rows come from PostgreSQL, so
      old events reappeared on every reload. Both panels now show only what arrives live over

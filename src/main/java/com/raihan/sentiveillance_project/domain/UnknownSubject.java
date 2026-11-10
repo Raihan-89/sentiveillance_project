@@ -11,12 +11,9 @@ import java.time.Instant;
  * A person the engine saw and tracked but could not identify, held so they can be named and
  * enrolled without ever taking a photograph.
  *
- * <p>The useful part is {@link #faceTemplate}: on SUBJECT_DISAPPEARED the SDK hands over the
- * best face template it accumulated across the whole visit
- * ({@code NSurveillanceEventDetails.getSubjectTemplate()}), which is the same kind of data
- * {@code EnrollmentService} derives from a still photo. Enrolling therefore needs nothing but
- * a name - and because the template came from this camera, at this angle and lighting, it is
- * often a better reference than a posed photo.
+ * <p>A usable live template queues the person while visible. Pending templates are matched
+ * across visits, and a better face-quality score updates the existing image and template
+ * together. Disappearance provides one last capture attempt if early extraction fails.
  *
  * <p>Not {@code @Lob} - see {@link Employee#getFaceTemplate()} for why that mapping breaks on
  * PostgreSQL.
@@ -53,6 +50,10 @@ public class UnknownSubject {
     /** File name of the best-frame JPEG, so the UI can show who this is. */
     @Column(name = "snapshot_name", length = 500)
     private String snapshotName;
+
+    /** SDK face quality (0..100). Null means a capture from before quality tracking. */
+    @Column(name = "face_quality")
+    private Integer faceQuality;
 
     /** Set once enrolled, so the row can be kept as an audit trail rather than deleted. */
     @Column(name = "enrolled_employee_id")

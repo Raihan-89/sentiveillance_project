@@ -17,8 +17,8 @@ import com.raihan.sentiveillance_project.config.SentiveillanceProperties;
 import com.raihan.sentiveillance_project.detection.DetectionRecorder;
 import com.raihan.sentiveillance_project.detection.SubjectEventSnapshot;
 import com.raihan.sentiveillance_project.domain.Employee;
-import com.raihan.sentiveillance_project.domain.UnknownSubject;
-import com.raihan.sentiveillance_project.domain.UnknownSubjectRepository;
+import com.raihan.sentiveillance_project.enrollment.UnknownCandidateService;
+import com.raihan.sentiveillance_project.enrollment.CandidateFaceMatcher;
 import com.raihan.sentiveillance_project.live.LiveEventStream;
 import com.raihan.sentiveillance_project.live.LiveFrameService;
 import com.raihan.sentiveillance_project.live.RecognizedPeopleService;
@@ -79,7 +79,8 @@ public class SurveillanceEngine {
     private final LiveEventStream liveEvents;
     private final RecognizedPeopleService recognizedPeople;
     /** Review queue of people the engine saw but could not name. */
-    private final UnknownSubjectRepository unknownSubjects;
+    private final UnknownCandidateService unknownCandidates;
+    private final CandidateFaceMatcher candidateMatcher;
 
     /**
      * Single-threaded so database rows land in event order; separate from the SDK's threads
@@ -87,11 +88,27 @@ public class SurveillanceEngine {
      */
     private final ExecutorService eventExecutor =
             Executors.newSingleThreadExecutor(r -> new Thread(r, "detection-writer"));
-    /**
-     * Snapshot JPEGs are written here, not on the SDK callback thread. Measured: writing one
-     * 390 KB frame inline cost 64-71 ms of the capture thread per disappeared subject, which
-     * is back-pressure straight into the video pipeline.
-     */
+    /** Reuses one matcher and serializes candidate comparisons without blocking capture. */
+    private final ExecutorService candidateExecutor =
+            Executors.newSingleThreadExecutor(r -> new Thread(r, "candidate-writer"));
+
+    /** Bound early extraction work so crowded frames cannot build an unlimited backlog. */
+    private final java.util.concurrent.Semaphore candidateSlots = new java.util.concurrent.Semaphore(4);
+
+    /** First usable capture immediately; later frames only when face quality improves. */
+    private final java.util.Map<Integer, CandidateCapture> candidateCaptures =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    static final class CandidateCapture {
+        volatile long nextAttempt;
+        volatile boolean pending;
+        volatile Long savedId;
+        volatile boolean identified;
+        volatile boolean suppressed;
+        volatile int savedQuality = -1;
+        volatile long attemptedFrame = -1;
+    }
+
     private final ExecutorService snapshotExecutor =
             Executors.newSingleThreadExecutor(r -> new Thread(r, "snapshot-writer"));
 
@@ -190,7 +207,8 @@ public class SurveillanceEngine {
                               DetectionRecorder recorder,
                               LiveFrameService liveFrames,
                               LiveEventStream liveEvents,
-                              UnknownSubjectRepository unknownSubjects,
+                              UnknownCandidateService unknownCandidates,
+                              CandidateFaceMatcher candidateMatcher,
                               RecognizedPeopleService recognizedPeople) {
         this.properties = properties;
         this.licenseService = licenseService;
@@ -198,7 +216,8 @@ public class SurveillanceEngine {
         this.recorder = recorder;
         this.liveFrames = liveFrames;
         this.liveEvents = liveEvents;
-        this.unknownSubjects = unknownSubjects;
+        this.unknownCandidates = unknownCandidates;
+        this.candidateMatcher = candidateMatcher;
         this.recognizedPeople = recognizedPeople;
         this.configuredFlags = properties.getSource().getFlags();
     }
@@ -267,6 +286,7 @@ public class SurveillanceEngine {
             subscribed = false;
             running = false;
             identityByTrace.clear();
+            candidateCaptures.clear();
             watchListSize.set(0);
         }
     }
@@ -397,6 +417,7 @@ public class SurveillanceEngine {
             liveFrames.clear();
             recognizedPeople.clear();
             identityByTrace.clear();
+            candidateCaptures.clear();
             forgetSourceDetails();
             surveillance.startSource(replacement);
         } catch (RuntimeException failure) {
@@ -567,8 +588,10 @@ public class SurveillanceEngine {
         } finally {
             eventExecutor.shutdown();
             snapshotExecutor.shutdown();
+            candidateExecutor.shutdown();
             probeExecutor.shutdownNow();
             try {
+                candidateExecutor.awaitTermination(10, TimeUnit.SECONDS);
                 eventExecutor.awaitTermination(10, TimeUnit.SECONDS);
                 snapshotExecutor.awaitTermination(10, TimeUnit.SECONDS);
             } catch (InterruptedException ie) {
@@ -800,7 +823,8 @@ public class SurveillanceEngine {
             // for something purely visual (measured: median 14 ms, worst 131 ms of queue wait
             // behind the single writer thread). Nothing here touches JDBC.
             try {
-                liveEvents.publish(snapshot, watchListNames.get(snapshot.matchedTemplateId()));
+                liveEvents.publish(snapshot, snapshot.matchedTemplateId() == null
+                        ? null : watchListNames.get(snapshot.matchedTemplateId()));
             } catch (Exception e) {
                 log.debug("Could not push event to the dashboard: {}", e.toString());
             }
@@ -831,8 +855,16 @@ public class SurveillanceEngine {
             eventsSeen.incrementAndGet();
             if (snapshot.isIdentified()) {
                 identityByTrace.put(snapshot.traceIndex(), snapshot.matchedTemplateId());
+                CandidateCapture capture = candidateCaptures.get(snapshot.traceIndex());
+                if (capture != null && !capture.identified) {
+                    capture.identified = true;
+                    candidateExecutor.execute(() -> {
+                        if (capture.savedId != null) unknownCandidates.removeIfPending(capture.savedId);
+                    });
+                }
             }
             if (disappeared) {
+                candidateCaptures.remove(snapshot.traceIndex());
                 subjectsSeen.incrementAndGet();
                 // Whoever this visit turned out to be, from the whole track rather than this
                 // one event.
@@ -935,11 +967,11 @@ public class SurveillanceEngine {
                     snapshotPath = saveSnapshot(best, details.getTraceIndex(), matchedId, rect,
                             hasFaceDetails);
                 }
-                // Only queue people who were never recognised during the entire visit.
-                if (disappeared && hasFaceDetails
-                        && matchedId == null
-                        && !identityByTrace.containsKey(details.getTraceIndex())) {
-                    captureUnknownSubject(details, snapshotPath);
+                if (hasFaceDetails && identity == null
+                        && properties.getEnrollment().isCaptureUnknownSubjects()
+                        && (objectType == null || objectType.Type == null
+                            || !NON_HUMAN_OBJECT_TYPES.contains(objectType.Type.name()))) {
+                    queueCandidate(details, best, sourceName, disappeared);
                 }
             } finally {
                 best.dispose();
@@ -963,49 +995,89 @@ public class SurveillanceEngine {
                 null);
     }
 
-    private void captureUnknownSubject(NSurveillanceEventDetails details, String snapshotPath) {
-        if (!properties.getEnrollment().isCaptureUnknownSubjects()) {
-            return;
+    private void queueCandidate(NSurveillanceEventDetails details, NSurveillanceEventDetails best,
+                                String sourceName, boolean disappeared) {
+        int trace = details.getTraceIndex();
+        CandidateCapture capture = candidateCaptures.computeIfAbsent(trace, ignored -> new CandidateCapture());
+        if (capture.identified || capture.suppressed || (capture.pending && !disappeared)
+                || (!disappeared && System.currentTimeMillis() < capture.nextAttempt)) return;
+        com.neurotec.biometrics.NLAttributes attributes = null;
+        try {
+            attributes = best.getAttributes(false);
+            if (attributes == null) return;
+            int rawQuality = Byte.toUnsignedInt(attributes.getQuality());
+            int quality = rawQuality <= 100 ? rawQuality : -1;
+            long frame = best.getFrameIndex();
+            // Never spend CPU on equal/worse frames after a successful capture.
+            if (capture.savedId != null && quality <= capture.savedQuality) return;
+            if (!disappeared && frame == capture.attemptedFrame) return;
+            // A finished visit needs one final fallback even if an early extraction is
+            // still queued. It runs behind that attempt and cannot create a second card.
+            boolean usesSlot = !disappeared;
+            if (usesSlot && !candidateSlots.tryAcquire()) return;
+            boolean submitted = false;
+            try {
+                byte[] jpeg = recognizedFace(best);
+                if (jpeg == null) return;
+                // Some SDK events already contain extracted features. Copy them while their
+                // native handles are valid, avoiding another detect/extract pass entirely.
+                byte[] template = liveCandidateTemplate(details, attributes);
+                capture.pending = true;
+                capture.attemptedFrame = frame;
+                capture.nextAttempt = System.currentTimeMillis() + 250;
+                candidateExecutor.execute(() -> {
+                    try { captureCandidate(sourceName, trace, jpeg, template, quality, capture); }
+                    finally { if (usesSlot) candidateSlots.release(); }
+                });
+                submitted = true;
+            } finally {
+                if (!submitted) {
+                    capture.pending = false;
+                    if (usesSlot) candidateSlots.release();
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Could not copy unknown face for trace {}: {}", trace, e.toString());
+        } finally {
+            if (attributes != null) attributes.dispose();
         }
+    }
+
+    private byte[] liveCandidateTemplate(NSurveillanceEventDetails details,
+                                         com.neurotec.biometrics.NLAttributes attributes) {
         com.neurotec.biometrics.NLTemplate template = null;
         try {
-            template = details.getSubjectTemplate();
-            if (template == null) {
-                return;
-            }
-            com.neurotec.io.NBuffer buffer = template.save();
-            byte[] bytes;
-            try {
-                bytes = buffer.toByteArray();
-            } finally {
-                buffer.dispose();
-            }
-            if (bytes.length == 0) {
-                return;
-            }
-
-            UnknownSubject subject = new UnknownSubject();
-            subject.setSourceName(properties.getSource().getName());
-            subject.setTraceIndex(details.getTraceIndex());
-            subject.setFaceTemplate(bytes);
-            subject.setSnapshotName(snapshotPath == null
-                    ? null
-                    : Path.of(snapshotPath).getFileName().toString());
-
-            eventExecutor.execute(() -> {
-                try {
-                    unknownSubjects.save(subject);
-                    unknownCaptured.incrementAndGet();
-                } catch (Throwable t) {
-                    log.warn("Could not store an unknown subject for review: {}", t.toString());
-                }
-            });
-        } catch (Throwable t) {
-            log.debug("No usable template for unknown trace {}: {}", details.getTraceIndex(), t.toString());
+            template = attributes.getTemplate(false);
+            if (template == null) template = details.getSubjectTemplate();
+            if (template == null) return null;
+            try (var buffer = template.save()) { return buffer.toByteArray(); }
+        } catch (Exception e) {
+            // SDK versions that only expose templates at disappearance use the warm extractor.
+            return null;
         } finally {
-            if (template != null) {
-                template.dispose();
+            if (template != null) template.dispose();
+        }
+    }
+
+    void captureCandidate(String sourceName, int trace, byte[] jpeg, byte[] liveTemplate,
+                          int quality, CandidateCapture capture) {
+        try {
+            if (capture.identified || capture.suppressed) return;
+            byte[] bytes = liveTemplate != null && liveTemplate.length > 0
+                    ? liveTemplate : candidateMatcher.extract(jpeg);
+            if (bytes == null || bytes.length == 0 || capture.identified) return;
+            var result = unknownCandidates.capture(sourceName, trace, capture.savedId, bytes, jpeg, quality);
+            if (result == null) {
+                capture.suppressed = true; // dismissed/enrolled while this frame was in flight
+                return;
             }
+            capture.savedId = result.id();
+            capture.savedQuality = result.quality();
+            if (result.created()) unknownCaptured.incrementAndGet();
+        } catch (Exception e) {
+            log.warn("Could not queue unknown face for trace {} (will retry): {}", trace, e.toString());
+        } finally {
+            capture.pending = false;
         }
     }
 

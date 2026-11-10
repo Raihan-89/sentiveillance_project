@@ -68,6 +68,17 @@ public class LiveEventStream {
         }
     }
 
+    /** Sent after candidate transaction commit, so a browser can fetch it immediately. */
+    public void candidatesChanged() {
+        for (SseEmitter emitter : emitters) {
+            try {
+                emitter.send(SseEmitter.event().name("candidates-changed").data(Map.of("changed", true)));
+            } catch (Exception e) {
+                emitters.remove(emitter);
+            }
+        }
+    }
+
     private static Map<String, Object> toPayload(SubjectEventSnapshot s, String employeeName) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("source", s.sourceName());

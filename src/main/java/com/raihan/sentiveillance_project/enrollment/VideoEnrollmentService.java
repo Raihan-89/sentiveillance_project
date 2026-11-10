@@ -47,7 +47,7 @@ public class VideoEnrollmentService {
         if (fullName == null || fullName.isBlank()) {
             throw new IllegalArgumentException("A name is required");
         }
-        UnknownSubject subject = unknownSubjects.findById(unknownId)
+        UnknownSubject subject = unknownSubjects.lockById(unknownId)
                 .orElseThrow(() -> new IllegalArgumentException("No unknown subject " + unknownId));
         if (subject.getEnrolledEmployeeId() != null) {
             throw new IllegalStateException("Already enrolled as employee " + subject.getEnrolledEmployeeId());
@@ -85,6 +85,6 @@ public class VideoEnrollmentService {
     /** Drops a candidate without enrolling - a duplicate, a passer-by, a bad capture. */
     @Transactional
     public void dismiss(long unknownId) {
-        unknownSubjects.deleteById(unknownId);
+        unknownSubjects.lockById(unknownId).ifPresent(unknownSubjects::delete);
     }
 }

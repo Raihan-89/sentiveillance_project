@@ -94,6 +94,7 @@ public class EnrollmentController {
         m.put("seenAt", s.getSeenAt());
         m.put("templateBytes", s.getFaceTemplate().length);
         m.put("snapshot", s.getSnapshotName());
+        m.put("faceQuality", s.getFaceQuality());
         return m;
     }
 }

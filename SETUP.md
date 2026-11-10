@@ -511,6 +511,35 @@ curl -s -X POST localhost:8080/api/source/cameras/test \
 Selections apply immediately and the camera list is persistent, but the *boot* source is still
 whatever `sentiveillance.source.*` says — a restart goes back to that.
 
+### Faster unknown-person enrollment
+
+The **Unidentified people** queue captures the first usable unknown face immediately. It
+copies an SDK template directly when available; otherwise a reusable biometric engine
+extracts one on the candidate worker. There is no deliberate first-capture delay. Work is
+bounded to four outstanding captures and failed attempts can retry after 250 ms.
+
+Pending face templates are matched across visits, sources and restarts. A matching person
+keeps the existing queue ID; only a strictly higher SDK face-quality score replaces the
+image and template together. Equal or lower quality leaves the saved capture intact.
+Legacy pending rows have unknown quality until a scored capture replaces them; matching
+legacy duplicates are merged when that person is seen again. This adds a nullable
+`unknown_subject.face_quality` column through the existing Hibernate schema update.
+
+The browser receives a queue-change event after the database transaction commits and
+refreshes immediately, with one-second polling as a reconnect fallback. Updated cards keep
+their name input while their image and quality refresh. Enrollment/dismissal and capture
+updates use row locks so an in-flight improvement cannot overwrite enrollment or recreate
+a dismissed card. Face matching still requires a usable biometric template: a detection
+box by itself does not guarantee immediate enrollment, and very poor views can fail to
+match the same identity across visits.
+
+Validation covered queue updates, face matching, and preservation of typed names. A
+sample-video diagnostic verified early queue admission with an isolated repository. The
+installed SDK also aborted during native shutdown with candidate capture disabled; that
+shutdown problem remains unresolved. Admission measurements exclude PostgreSQL and
+browser/network latency. The temporary tests added for this work were removed after
+validation at the user's request.
+
 ### Recognized faces on the dashboard
 
 The **Recognized people** panel beside the live video displays a face cropped from the
